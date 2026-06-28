@@ -22,7 +22,7 @@ DEST="/sdcard/Android/data/${PKG}/files/models"
 
 # Resolve adb from PATH or the standard SDK locations.
 ADB="$(command -v adb || true)"
-for cand in "$ANDROID_HOME/platform-tools/adb" "$ANDROID_SDK_ROOT/platform-tools/adb" \
+for cand in "${ANDROID_HOME:-}/platform-tools/adb" "${ANDROID_SDK_ROOT:-}/platform-tools/adb" \
             "$HOME/Library/Android/sdk/platform-tools/adb"; do
   [ -z "$ADB" ] && [ -x "$cand" ] && ADB="$cand"
 done
