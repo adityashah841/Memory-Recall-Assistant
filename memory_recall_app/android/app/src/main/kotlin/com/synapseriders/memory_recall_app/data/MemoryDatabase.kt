@@ -12,7 +12,7 @@ import androidx.room.RoomDatabase
  */
 @Database(
     entities = [PersonProfileEntity::class, MemorySessionEntity::class],
-    version = 2, // v2 landmark schema (Checkpoint 2.5)
+    version = 3, // v4 CavaFace embedding schema (Checkpoint 2.6)
     exportSchema = false,
 )
 abstract class MemoryDatabase : RoomDatabase() {

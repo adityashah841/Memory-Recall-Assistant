@@ -157,12 +157,12 @@ Reproduced exactly in Sections 8 (insertion) and 9 (querying):
 
 ## 5. Data model (exact schema)
 
-> Storage engine: **Room over SQLite** (Kotlin). **v2 landmark schema (Checkpoint 2.5).** The only
-> stored vector is `person_profile.landmark_vector` (face-mesh geometry), a `float32[936]`
-> little-endian blob, **L2-normalized at write time** so similarity = dot product. Identity matching
-> is a **linear landmark scan** over all profiles (Section 7) — no ANN index required at hackathon
-> scale. **No face images and no learned embeddings are stored** (privacy); session rows carry no
-> vectors. See §22 for the v1→v2 migration history.
+> Storage engine: **Room over SQLite** (Kotlin). **v4 CavaFace embedding schema (Checkpoint 2.6).**
+> The only stored vector is `person_profile.face_embedding`, a `float32[512]` CavaFace embedding
+> stored as a little-endian blob, **L2-normalized at write time** so cosine similarity = dot product.
+> Identity matching is a **linear embedding scan** over all profiles (Section 7) — no ANN index
+> required at hackathon scale. No face images are stored; session rows carry no vectors. See §22 for
+> the full schema migration history (v1 → v2 landmark → v4 CavaFace).
 
 ### 5.1 `person_profile_table` (entity: `PersonProfileEntity`)
 The canonical record per distinct person. **Identity index.**
@@ -171,7 +171,7 @@ The canonical record per distinct person. **Identity index.**
 | --- | --- | --- | --- |
 | `person_id` | INTEGER PK (autoincrement) | no | Assigned as new people are encountered. |
 | `name` | TEXT | yes | Filled when known / during enrollment. |
-| `landmark_vector` | BLOB (`float32[936]`) | no | Face-mesh landmark geometry (468 pts × (x, y)). **Identification only.** L2-normalized. |
+| `face_embedding` | BLOB (`float32[512]`, CavaFace space) | no | **Identification only.** L2-normalized. |
 | `context_notes` | TEXT | yes | Any context inferred at the time the person was added. |
 | `created_at` | INTEGER (epoch ms) | no | |
 | `updated_at` | INTEGER (epoch ms) | no | |
@@ -192,12 +192,13 @@ One row per persisted event (tick that produced a meaningful record).
 | `transcript` | TEXT | yes | ASR transcript for that same window. |
 | `created_at` | INTEGER (epoch ms) | no | |
 
-**Landmark decision (v2, Checkpoint 2.5):** identity is matched on
-`person_profile.landmark_vector` (face-mesh geometry) via a linear scan (Section 7). The v1
-embeddings (`face_embedding`, `frame_embedding`, `voice_embedding`) and the `reference_face_image`
-were **removed**; session rows carry **no vectors**. `frame_image` remains a non-face scene/frame
-thumbnail path. **Note:** Sections 7 and 10 still describe v1 embedding-based identification/retrieval
-and are pending a v2 revision — tracked in §22.
+**Embedding decision (v4, Checkpoint 2.6):** identity is matched on
+`person_profile.face_embedding` (512-d, CavaFace space) via a linear embedding scan (Section 7) —
+cosine similarity over L2-normalized vectors. Session rows carry **no vectors**; `frame_image`
+remains a non-face scene/frame thumbnail path. Section 7's `face_embedding` cosine-match algorithm
+now matches the schema again (model is CavaFace rather than ArcFace/MobileFaceNet); Section 10 still
+describes the per-session CLIP vector search, which the recall pipeline does not yet implement —
+tracked in §22.
 
 ### 5.3 Indices & relations
 - Index `session_table(person_id)`; index `session_table(timestamp)`;
@@ -678,8 +679,9 @@ and note it in §22.
 
 ## 22. Deviations & schema changelog
 
-> The task workflow references §§18–22; in this revision of the plan only §22 (this section) is
-> present. Sections 18–21 were not authored here. Record every deviation from the contract below.
+> The task workflow references §§18–24; in this revision of the plan only §22 (this section) is
+> present — §§18–21, 23, 24 were not authored here, so deviations that those tasks route to "§24"
+> are recorded in this changelog. Record every deviation from the contract below.
 
 ### Checkpoint 2.5 — v1 embeddings → v2 landmark schema
 **What changed.** Migrated the data layer off learned embeddings to face-mesh **landmark geometry**,
@@ -694,7 +696,23 @@ driven by the privacy constraint *"do not store face images or embeddings."*
   (hackathon-stage; no hand-written migration).
 - §5 and §11.1 updated above to match.
 
-**Still inconsistent (follow-up needed).** §7 (identification) and §10 (recall/retrieval) still
-describe the v1 embedding approach (`face_embedding` cosine match; `frame`/`voice` CLIP vector
-search). They must be revised to the v2 landmark scan + non-vector retrieval in a later checkpoint.
-The recall pipeline remains stubbed in code until then, so no behavior depends on the stale text yet.
+**Superseded by Checkpoint 2.6** (see below).
+
+### Checkpoint 2.6 — v2 landmark → v4 CavaFace embedding schema
+**What changed.** Migrated the person identity vector from face-mesh landmark geometry back to a
+learned **CavaFace** face embedding. (Task referenced §21 / §24 of a v4.0 plan revision not present
+in this copy; recorded here.)
+
+- `person_profile_table`: renamed column `landmark_vector` → `face_embedding` (BLOB, non-null), now
+  `float32[512]` (CavaFace space, was 936-d face-mesh); field `landmarkVector` → `faceEmbedding`.
+- `LandmarkCodec` → `EmbeddingCodec` (generic `float32[]` ↔ blob + L2 norm; KDoc → 512-d embedding).
+- `DemoSeeder`: seeds a deterministic L2-normalized `float32[512]` per person (2 people, 5 sessions
+  with transcripts).
+- `PersonDao.findAll()` retained for the embedding scan; `session_table` unchanged (KDoc refreshed).
+- `MemoryDatabase`: version 2 → 3, `fallbackToDestructiveMigration(dropAllTables = true)`.
+- **Pigeon unchanged** — `PersonProfileDto` is already `{personId, name, contextNotes}`; not regenerated.
+- §5 and the §5.1 table updated above to match.
+
+**Consistency note.** §7's `face_embedding` cosine-match algorithm is now aligned with the schema
+again (model is CavaFace rather than ArcFace/MobileFaceNet). §10's per-session CLIP vector search
+remains unimplemented (recall pipeline still stubbed), so no behavior depends on it yet.

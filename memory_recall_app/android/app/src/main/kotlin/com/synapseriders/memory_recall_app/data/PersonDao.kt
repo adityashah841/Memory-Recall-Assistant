@@ -10,7 +10,7 @@ interface PersonDao {
     @Insert
     suspend fun insert(person: PersonProfileEntity): Long
 
-    /** Full table fetch for the landmark scan during identification (Section 7). */
+    /** Full table fetch for the face-embedding scan during identification (Section 7). */
     @Query("SELECT * FROM person_profile_table ORDER BY person_id")
     suspend fun findAll(): List<PersonProfileEntity>
 

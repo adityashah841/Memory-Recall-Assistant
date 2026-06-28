@@ -5,15 +5,14 @@ import java.nio.ByteOrder
 import kotlin.math.sqrt
 
 /**
- * Converts landmark vectors to/from the on-disk representation: generic `float32[]` <-> little-endian
- * blob, with L2 normalization (IMPLEMENTATION_PLAN.md Section 5, v2 landmark schema — Checkpoint 2.5).
+ * Converts face embeddings to/from the on-disk representation: generic `float32[]` <-> little-endian
+ * blob, with L2 normalization (IMPLEMENTATION_PLAN.md Section 5, v4 CavaFace embedding schema —
+ * Checkpoint 2.6).
  *
- * The only vector stored is `person_profile.landmark_vector` (936-d = 468 face-mesh points x (x, y)).
- * It is L2-normalized at write time so geometric similarity reduces to a dot product during the
- * landmark scan (Section 7). Privacy: the v2 schema stores landmark *geometry* only — never face
- * images or learned embeddings.
+ * The stored vector is `person_profile.face_embedding` (512-d, CavaFace space). It is L2-normalized
+ * at write time so cosine similarity reduces to a dot product during the embedding scan (Section 7).
  */
-object LandmarkCodec {
+object EmbeddingCodec {
 
     fun toBlob(vector: FloatArray): ByteArray {
         val buf = ByteBuffer.allocate(vector.size * Float.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)

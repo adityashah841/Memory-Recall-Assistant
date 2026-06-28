@@ -7,12 +7,12 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * `session_table` — one row per persisted meaningful event (Section 5.2, v2 landmark schema).
+ * `session_table` — one row per persisted meaningful event (Section 5.2, v4 CavaFace schema).
  *
  * `personId` is a nullable FK to [PersonProfileEntity] with `ON DELETE SET NULL` (Section 5.3):
- * NULL when no person was in the frame (Case C). The v2 schema stores **no embeddings**
- * (Checkpoint 2.5): `frame_embedding` and `voice_embedding` were removed; the FK and the three
- * indices (person_id, timestamp, lat/lng) are retained.
+ * NULL when no person was in the frame (Case C). Session rows store **no vectors** (embeddings live
+ * only on the person profile); the FK and the three indices (person_id, timestamp, lat/lng) are
+ * retained.
  */
 @Entity(
     tableName = "session_table",

@@ -3,11 +3,10 @@ package com.synapseriders.memory_recall_app.data
 import java.util.Random
 
 /**
- * Populates a coherent demo knowledge graph (Section 15, v2 landmark schema): 2 people each with a
- * `landmark_vector` and 5 sessions spread across a couple of locations and timestamps — enough to
- * exercise the recall cases (known person + a no-person Case C row). Landmark vectors are
- * deterministic unit vectors so demo runs are reproducible. No face images or embeddings are stored
- * (Checkpoint 2.5).
+ * Populates a coherent demo knowledge graph (Section 15, v4 CavaFace embedding schema): 2 people
+ * each with a `face_embedding` and 5 sessions spread across a couple of locations and timestamps —
+ * enough to exercise the recall cases (known person + a no-person Case C row). Embeddings are
+ * deterministic L2-normalized unit vectors so demo runs are reproducible (Checkpoint 2.6).
  */
 class DemoSeeder(
     private val personDao: PersonDao,
@@ -85,7 +84,7 @@ class DemoSeeder(
 
     private fun person(name: String, notes: String, seed: Int, now: Long) = PersonProfileEntity(
         name = name,
-        landmarkVector = LandmarkCodec.toBlob(unitVector(LANDMARK_DIM, seed)),
+        faceEmbedding = EmbeddingCodec.toBlob(unitVector(EMBED_DIM, seed)),
         contextNotes = notes,
         createdAt = now,
         updatedAt = now,
@@ -114,11 +113,11 @@ class DemoSeeder(
     private fun unitVector(dim: Int, seed: Int): FloatArray {
         val rnd = Random(seed.toLong())
         val v = FloatArray(dim) { rnd.nextFloat() * 2f - 1f }
-        return LandmarkCodec.l2Normalize(v)
+        return EmbeddingCodec.l2Normalize(v)
     }
 
     private companion object {
-        // 468 MediaPipe face-mesh landmarks x (x, y) = 936.
-        const val LANDMARK_DIM = 936
+        // CavaFace face embedding dimensionality.
+        const val EMBED_DIM = 512
     }
 }
