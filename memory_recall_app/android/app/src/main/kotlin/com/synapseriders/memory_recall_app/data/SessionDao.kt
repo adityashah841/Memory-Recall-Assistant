@@ -64,6 +64,30 @@ interface SessionDao {
     @Query("SELECT * FROM session_table ORDER BY timestamp DESC LIMIT :limit")
     suspend fun findRecent(limit: Long): List<MemorySessionEntity>
 
+    /** Case C: most-recent person-less sessions (§11.C). */
+    @Query("SELECT * FROM session_table WHERE person_id IS NULL ORDER BY timestamp DESC")
+    suspend fun findNoPerson(): List<MemorySessionEntity>
+
+    /** Case C vicinity: person-less sessions near a label or lat/lng box (§11.C, §12.2). */
+    @Query(
+        """
+        SELECT * FROM session_table
+        WHERE person_id IS NULL
+          AND (
+            (:locationLabel IS NOT NULL AND location_label = :locationLabel)
+            OR (latitude BETWEEN :minLat AND :maxLat AND longitude BETWEEN :minLng AND :maxLng)
+          )
+        ORDER BY timestamp DESC
+        """,
+    )
+    suspend fun vicinityNoPerson(
+        locationLabel: String?,
+        minLat: Double,
+        maxLat: Double,
+        minLng: Double,
+        maxLng: Double,
+    ): List<MemorySessionEntity>
+
     @Query("SELECT COUNT(*) FROM session_table")
     suspend fun count(): Long
 

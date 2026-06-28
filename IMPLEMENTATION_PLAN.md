@@ -939,6 +939,10 @@ Apply §21. **DoD:** §21.2.
   timeout → `"This is {name}."`. `RecallScreen` renders Case A/B/C.
 - **DoD (airplane mode):** Enroll teammate → store sessions via `forceTick()` → Recall on centered
   face → name + suggestions → tap question → answer with evidence.
+- **Status:** 🟡 `RetrievalRanker` + `QuestionSuggestionEngine` + `AnswerGenerator` + `RecallEngine`
+  implemented and wired into the channel; Flutter UI already renders A/B/C. Logic covered by JVM unit
+  tests. Demoable now via `seedDemoData` (frame demo-fallback); live-face + grounded LLM need CP6/CP8 +
+  Genie libs. Deviations in §24.4.
 
 ### CHECKPOINT 8 — Enrollment flow
 - `EnrollmentScreen` with center reticle; capture exactly `ENROLLMENT_SAMPLES = 5` **centered**
@@ -1048,6 +1052,32 @@ front-end + buffer. Deviations:
 ring rolling) — **not run here** (no JDK). The "~2 s transcript" DoD needs the native decode + QAIRT
 libs + S25; the `SpeechRecognizer` fallback path needs the device. Logic compiles + degrades
 gracefully (no Whisper ⇒ "").
+
+### 24.4 CP7 deviations & status
+Recall read path implemented: `recall/{RetrievalRanker, QuestionSuggestionEngine, AnswerGenerator,
+RecallEngine}` wired into `MemoryBackendChannel`. The Flutter `RecallScreen`/controller already render
+Cases A/B/C + suggestions + answer + evidence (built in CP1), so no Dart changes were needed.
+Deviations:
+1. **CP7 built before CP6/CP8.** `RecallEngine` takes `frameProvider`/`locationProvider` (default
+   null). Until CP6 wires the camera, `captureRecallContext` falls back to the **most-recent seeded
+   session** so the path is demoable via `seedDemoData`. The real identify path activates as soon as
+   CP6 passes a frame provider — no API change.
+2. **Sync Pigeon bridge.** `captureRecallContext/getSuggestions/answerQuestion` are synchronous Pigeon
+   methods; the suspend recall work runs via `runBlocking(Dispatchers.IO)`. DB is fast and the LLM is
+   time-boxed (5 s, currently instant fallback). Move these to `@async` (Pigeon regen) when the live
+   Genie LLM is wired, to avoid blocking the platform thread.
+3. **Vicinity** uses the existing `vicinity`/added `vicinityNoPerson` box queries (label OR lat/lng
+   bounding box from `VICINITY_RADIUS_M`); no haversine refinement (box is adequate at 75 m).
+4. **Suggestions** are template-only with deterministic ids; LLM rewrite deferred (no topic invention,
+   §12.3). Topic = longest non-stopword token from the latest transcript.
+5. **Answer** runs `generate` with a 5 s `withTimeoutOrNull`; empty rows → "I don't have a memory of
+   that."; timeout/unavailable → `"This is {name}."` (§7.3). Evidence always attached.
+
+**Build/DoD status:** retrieval/suggestion/answer logic covered by **JVM unit tests**
+(`RetrievalRankerTest`, `QuestionSuggestionEngineTest`, `AnswerGeneratorTest`). The full airplane-mode
+DoD (enroll → Recall on a centered face → name → answer) needs CP6 (camera) + CP8 (enrollment); today
+it is demoable end-to-end via `seedDemoData` → Recall (demo fallback) → suggestions → answer +
+evidence. Grounded LLM phrasing awaits the Genie libs (template fallback until then).
 
 ---
 
