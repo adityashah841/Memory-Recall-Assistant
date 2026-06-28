@@ -535,6 +535,67 @@ class ServiceStateDto {
   }
 }
 
+/// Result of a proactive 5-frame enrollment (§3.6, CP8).
+class EnrollResultDto {
+  EnrollResultDto({
+    required this.success,
+    required this.personId,
+    required this.samplesCaptured,
+    this.message,
+  });
+
+  bool success;
+
+  int personId;
+
+  int samplesCaptured;
+
+  String? message;
+
+  List<Object?> _toList() {
+    return <Object?>[
+      success,
+      personId,
+      samplesCaptured,
+      message,
+    ];
+  }
+
+  Object encode() {
+    return _toList();  }
+
+  static EnrollResultDto decode(Object result) {
+    result as List<Object?>;
+    return EnrollResultDto(
+      success: result[0]! as bool,
+      personId: result[1]! as int,
+      samplesCaptured: result[2]! as int,
+      message: result[3] as String?,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! EnrollResultDto || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(success, other.success) && _deepEquals(personId, other.personId) && _deepEquals(samplesCaptured, other.samplesCaptured) && _deepEquals(message, other.message);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
+
+  @override
+  String toString() {
+    return 'EnrollResultDto(success: $success, personId: $personId, samplesCaptured: $samplesCaptured, message: $message)';
+  }
+}
+
 
 class _PigeonCodec extends StandardMessageCodec {
   const _PigeonCodec();
@@ -564,6 +625,9 @@ class _PigeonCodec extends StandardMessageCodec {
     }    else if (value is ServiceStateDto) {
       buffer.putUint8(135);
       writeValue(buffer, value.encode());
+    }    else if (value is EnrollResultDto) {
+      buffer.putUint8(136);
+      writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
     }
@@ -586,6 +650,8 @@ class _PigeonCodec extends StandardMessageCodec {
         return MemorySessionDto.decode(readValue(buffer)!);
       case 135:
         return ServiceStateDto.decode(readValue(buffer)!);
+      case 136:
+        return EnrollResultDto.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);
     }
@@ -751,6 +817,25 @@ class MemoryBackendApi {
         isNullValid: true,
     )
     ;
+  }
+
+  Future<EnrollResultDto> enrollNewPerson(String name, String? contextNotes) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.memory_recall_app.MemoryBackendApi.enrollNewPerson$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[name, contextNotes]);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+
+    final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
+    return pigeonVar_replyValue! as EnrollResultDto;
   }
 
   Future<List<MemorySessionDto>> listSessions(int limit, int offset) async {

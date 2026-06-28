@@ -21,6 +21,31 @@ class EnrollmentController extends ChangeNotifier {
   String? get message => _message;
   List<PersonProfile> get people => _people;
 
+  bool _enrolling = false;
+  bool get enrolling => _enrolling;
+
+  /// CP8 (§3.6): start capture so the camera feeds frames, then capture 5 centered frames on-device
+  /// and store a new named profile.
+  Future<void> enrollNew(String name, String? contextNotes) async {
+    _enrolling = true;
+    _error = null;
+    _message = null;
+    notifyListeners();
+    try {
+      await _backend.startCapture();
+      final res = await _backend.enrollNewPerson(name, contextNotes);
+      _message = res.success
+          ? 'Enrolled "$name" (#${res.personId}) from ${res.samplesCaptured} frames.'
+          : (res.message ?? 'Enrollment failed.');
+      await load();
+    } catch (e) {
+      _error = e.toString();
+    } finally {
+      _enrolling = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> load() async {
     _loading = true;
     _error = null;

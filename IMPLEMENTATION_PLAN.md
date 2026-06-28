@@ -954,6 +954,9 @@ Apply §21. **DoD:** §21.2.
   confirmation with name; `enrollPerson()` via Pigeon.
 - **DoD:** Enrollment captures 5 centered frames; reticle green when centered/ready; the person is
   recognized as Case A in future ticks.
+- **Status:** 🟡 `PersonEnrollmentManager` + `enrollNewPerson` Pigeon API + EnrollmentScreen camera FAB
+  + reticle overlay implemented; failure path unit-tested, averaging via CP4 tests. On-device 5-frame
+  capture + Case-A recognition needs the S25 camera + QAIRT/CavaFace libs. Deviations in §24.6.
 
 ### CHECKPOINT 9 — Latency dashboard & demo polish
 - Latency for all stages: `face_detection`, `face_alignment`, `face_embedding`, `identity_match`,
@@ -1110,6 +1113,30 @@ service runs). Deviations:
 faces rejected) needs the **camera on the S25**; note that until the **QAIRT/CavaFace libs** land
 `embedFace` returns empty ⇒ `identify` yields Case C (no A/B), so live A/B verification is gated on the
 QNN libs **and** CP8 enrollment. Case C capture (scene change) works on-device today.
+
+### 24.6 CP8 deviations & status
+Proactive enrollment implemented: `enrollment/PersonEnrollmentManager` captures
+`ENROLLMENT_SAMPLES = 5` centered-face embeddings from the live camera, averages + L2-normalizes
+(`FaceEmbeddingEngine.averageEmbeddings`), and stores a new named profile. New Pigeon method
+`enrollNewPerson(name, contextNotes) → EnrollResultDto` (regenerated). The Flutter `EnrollmentScreen`
+gains an **Enroll (camera)** FAB + name dialog + a center-reticle capture overlay; the existing
+list/name path (Case B) is unchanged. Deviations:
+1. **New Pigeon API** (`enrollNewPerson` + `EnrollResultDto`) — Pigeon regenerated (both generated
+   files). The plan's `enrollPerson(personId,…)` stays for Case-B naming; proactive capture-enroll
+   needed a camera-side trigger.
+2. **No live camera preview in Flutter** — frames live in the service/`CaptureState`, not surfaced to a
+   Flutter texture. The reticle overlay shows capture state as guidance; a real preview (PlatformView)
+   is out of CP8 scope.
+3. **Enrollment auto-starts capture** (`controller.enrollNew` calls `startCapture` first) so frames are
+   flowing; it then collects 5 centered samples (≈ up to 10 s) and stores.
+4. Enrollment reuses `identify(frame, emptyList())` purely to obtain the centered face's embedding.
+
+**Build/DoD status:** the failure path (no centered frames → no insert) is covered by a **JVM unit
+test** (`PersonEnrollmentManagerTest`); averaging/L2-norm is covered by CP4 tests. The full on-device
+DoD (capture 5 centered frames; reticle green when ready; person later recognized as **Case A**) needs
+the **S25 camera + QAIRT/CavaFace libs** — without CavaFace, `embedFace` is empty so enrollment reports
+"couldn't capture" and later recognition can't discriminate faces. Logic compiles + degrades
+gracefully.
 
 ---
 

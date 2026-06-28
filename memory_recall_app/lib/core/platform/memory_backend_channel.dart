@@ -36,6 +36,10 @@ class MemoryBackendChannel {
   Future<void> enrollPerson(int personId, String name, String? contextNotes) =>
       _guard(() => _api.enrollPerson(personId, name, contextNotes));
 
+  /// CP8: capture 5 centered frames on-device and store a new named profile.
+  Future<EnrollResultDto> enrollNewPerson(String name, String? contextNotes) =>
+      _guard(() => _api.enrollNewPerson(name, contextNotes));
+
   // --- Timeline / debug ---
   Future<List<MemorySessionDto>> listSessions(int limit, int offset) =>
       _guard(() => _api.listSessions(limit, offset));

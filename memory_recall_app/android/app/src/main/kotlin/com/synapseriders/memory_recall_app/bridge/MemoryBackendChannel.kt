@@ -11,6 +11,7 @@ import com.synapseriders.memory_recall_app.recall.QuestionSuggestionEngine
 import com.synapseriders.memory_recall_app.recall.RecallEngine
 import com.synapseriders.memory_recall_app.recall.RecallLocation
 import com.synapseriders.memory_recall_app.recall.RetrievalRanker
+import com.synapseriders.memory_recall_app.enrollment.PersonEnrollmentManager
 import com.synapseriders.memory_recall_app.service.MemoryForegroundService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +45,9 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
     // service isn't running these are null and captureRecallContext falls back to seeded data (§24.4).
     private val recallEngine: RecallEngine
 
+    // CP8 proactive enrollment (5-frame capture → average → store), reads the live camera frame.
+    private val enrollmentManager: PersonEnrollmentManager
+
     // Mirrors the foreground service's running state for getServiceState.
     private var running: Boolean = false
 
@@ -63,6 +67,11 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
             locationProvider = {
                 CaptureState.latestLocation?.let { RecallLocation(it.label, it.latitude, it.longitude) }
             },
+        )
+        enrollmentManager = PersonEnrollmentManager(
+            personDao = personDao,
+            faceEngine = FaceEmbeddingEngine(modelRunner),
+            frameProvider = { CaptureState.latestFrame },
         )
     }
 
@@ -118,6 +127,20 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
         callback: (Result<Unit>) -> Unit,
     ) = deliver(callback) {
         repository.enrollPerson(personId, name, contextNotes)
+    }
+
+    override fun enrollNewPerson(
+        name: String,
+        contextNotes: String?,
+        callback: (Result<EnrollResultDto>) -> Unit,
+    ) = deliver(callback) {
+        val result = enrollmentManager.enroll(name, contextNotes)
+        EnrollResultDto(
+            success = result.success,
+            personId = result.personId,
+            samplesCaptured = result.samples.toLong(),
+            message = result.message,
+        )
     }
 
     // --- Timeline / debug ----------------------------------------------------

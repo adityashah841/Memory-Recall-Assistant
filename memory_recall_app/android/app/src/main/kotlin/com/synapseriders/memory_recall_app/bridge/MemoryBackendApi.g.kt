@@ -558,6 +558,59 @@ data class ServiceStateDto (
     return "ServiceStateDto(running=$running, sessionCount=$sessionCount, personCount=$personCount)"
   }
 }
+
+/**
+ * Result of a proactive 5-frame enrollment (§3.6, CP8).
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class EnrollResultDto (
+  val success: Boolean,
+  val personId: Long,
+  val samplesCaptured: Long,
+  val message: String? = null
+)
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): EnrollResultDto {
+      val success = pigeonVar_list[0] as Boolean
+      val personId = pigeonVar_list[1] as Long
+      val samplesCaptured = pigeonVar_list[2] as Long
+      val message = pigeonVar_list[3] as String?
+      return EnrollResultDto(success, personId, samplesCaptured, message)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      success,
+      personId,
+      samplesCaptured,
+      message,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other == null || other.javaClass != javaClass) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    val other = other as EnrollResultDto
+    return MemoryBackendApiPigeonUtils.deepEquals(this.success, other.success) && MemoryBackendApiPigeonUtils.deepEquals(this.personId, other.personId) && MemoryBackendApiPigeonUtils.deepEquals(this.samplesCaptured, other.samplesCaptured) && MemoryBackendApiPigeonUtils.deepEquals(this.message, other.message)
+  }
+
+  override fun hashCode(): Int {
+    var result = javaClass.hashCode()
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.success)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.personId)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.samplesCaptured)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.message)
+    return result
+  }
+  override fun toString(): String {
+    return "EnrollResultDto(success=$success, personId=$personId, samplesCaptured=$samplesCaptured, message=$message)"
+  }
+}
 private open class MemoryBackendApiPigeonCodec : StandardMessageCodec() {
   override fun readValueOfType(type: Byte, buffer: ByteBuffer): Any? {
     return when (type) {
@@ -596,6 +649,11 @@ private open class MemoryBackendApiPigeonCodec : StandardMessageCodec() {
           ServiceStateDto.fromList(it)
         }
       }
+      136.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          EnrollResultDto.fromList(it)
+        }
+      }
       else -> super.readValueOfType(type, buffer)
     }
   }
@@ -629,6 +687,10 @@ private open class MemoryBackendApiPigeonCodec : StandardMessageCodec() {
         stream.write(135)
         writeValue(stream, value.toList())
       }
+      is EnrollResultDto -> {
+        stream.write(136)
+        writeValue(stream, value.toList())
+      }
       else -> super.writeValue(stream, value)
     }
   }
@@ -645,6 +707,7 @@ interface MemoryBackendApi {
   fun getSuggestions(ctx: RecallContextDto): List<SuggestionDto>
   fun answerQuestion(ctx: RecallContextDto, suggestionId: String, freeText: String?): RecallAnswerDto
   fun enrollPerson(personId: Long, name: String, contextNotes: String?, callback: (Result<Unit>) -> Unit)
+  fun enrollNewPerson(name: String, contextNotes: String?, callback: (Result<EnrollResultDto>) -> Unit)
   fun listSessions(limit: Long, offset: Long, callback: (Result<List<MemorySessionDto>>) -> Unit)
   fun listPeople(callback: (Result<List<PersonProfileDto>>) -> Unit)
   fun seedDemoData(callback: (Result<Unit>) -> Unit)
@@ -790,6 +853,27 @@ interface MemoryBackendApi {
                 reply.reply(MemoryBackendApiPigeonUtils.wrapError(error))
               } else {
                 reply.reply(MemoryBackendApiPigeonUtils.wrapResult(null))
+              }
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.memory_recall_app.MemoryBackendApi.enrollNewPerson$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val nameArg = args[0] as String
+            val contextNotesArg = args[1] as String?
+            api.enrollNewPerson(nameArg, contextNotesArg) { result: Result<EnrollResultDto> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(MemoryBackendApiPigeonUtils.wrapResult(data))
               }
             }
           }

@@ -80,6 +80,14 @@ class ServiceStateDto {
   int personCount;
 }
 
+/// Result of a proactive 5-frame enrollment (§3.6, CP8).
+class EnrollResultDto {
+  bool success;
+  int personId; // new profile id, or -1 on failure
+  int samplesCaptured; // centered frames actually embedded
+  String? message;
+}
+
 // ---------------------------------------------------------------------------
 // 11.2 Host API (Kotlin implements; Flutter calls). All calls are async.
 // ---------------------------------------------------------------------------
@@ -102,9 +110,14 @@ abstract class MemoryBackendApi {
     String? freeText,
   );
 
-  // Enrollment (Case B follow-up)
+  // Enrollment (Case B follow-up): name an existing unknown profile.
   @async
   void enrollPerson(int personId, String name, String? contextNotes);
+
+  // Enrollment (CP8, §3.6): capture 5 centered frames from the live camera, average their
+  // embeddings, and store a new named profile. Requires the capture service to be running.
+  @async
+  EnrollResultDto enrollNewPerson(String name, String? contextNotes);
 
   // Timeline / debug
   @async
