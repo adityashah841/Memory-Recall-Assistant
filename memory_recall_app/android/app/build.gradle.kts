@@ -88,8 +88,10 @@ dependencies {
     ksp("androidx.room:room-compiler:$roomVersion")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
-    // CP3 (§2, §16): ExecuTorch runtime for the face detection/landmark .pte models. Drop
-    // `executorch-android-release.aar` into app/libs/ (github.com/pytorch/executorch/releases).
-    // Loaded reflectively (ai/ExecuTorchBackend.kt) so the project compiles even when libs/ is empty.
+    // CP3 (§2, §16): ExecuTorch runtime for the face detection/landmark .pte models, from Maven
+    // Central (org.pytorch:executorch-android). Loaded reflectively (ai/ExecuTorchBackend.kt), so the
+    // app still compiles/runs (with fallback) if this is ever absent or version-mismatched.
+    implementation("org.pytorch:executorch-android:1.3.1")
+    // Optional override: drop a specific executorch AAR into app/libs/ to pin a matching runtime.
     implementation(fileTree("libs") { include("*.aar") })
 }

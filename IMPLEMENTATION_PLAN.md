@@ -713,8 +713,8 @@ On device → /sdcard/Android/data/com.synapseriders.memory_recall_app/files/mod
     └── tokenizer.json  tokenizer_config.json  special_tokens_map.json  config.json
 
 In repo (committed):
-android/app/libs/
-└── executorch-android-release.aar        ← from github.com/pytorch/executorch/releases
+android/app/libs/                          ← optional manual ExecuTorch AAR override (ExecuTorch is
+                                             pulled from Maven: org.pytorch:executorch-android:1.3.1)
 android/app/src/main/jniLibs/arm64-v8a/   ← QAIRT 2.45 .so libs (NOT committed; per-dev local)
 scripts/push_models.sh                     ← adb push helper (laptop → device)
 ```
