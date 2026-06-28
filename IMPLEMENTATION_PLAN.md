@@ -13,19 +13,18 @@
 
 ## 0. Current status & incremental path
 
-This project is **already underway**. Two checkpoints are complete, but they were built against the
-**original v1 schema** (face/scene/voice *embeddings*). v2.0 replaces that identity approach with
-**privacy-first landmark geometry** and removes all embeddings. The immediate next task is therefore
-a **data-layer migration** (Checkpoint 2.5) before any new feature work.
+This project is **already underway**. The data layer has been migrated to the v2.0 **privacy-first
+landmark geometry** schema (all embeddings removed). The next task is **Checkpoint 3** (the MediaPipe
+ExecuTorch runner).
 
 | Checkpoint | State | Notes |
 | --- | --- | --- |
 | **CP1 — Skeleton & Pigeon bridge** | ✅ Done | Flutter shell (4 screens), Pigeon API, `MemoryBackendChannel` with canned data, `MainActivity` host registration. |
-| **CP2 — Data layer** | ⚠️ Done on **old schema** | Room DB, entities, DAOs, `MemoryRepository`, `DemoSeeder`, `DtoMappers` exist — but with `face_embedding` / `frame_embedding` / `voice_embedding` / `reference_face_image` / `voice_id` and an `EmbeddingCodec`. **Must be migrated.** |
-| **CP2.5 — Schema migration to landmark identity** | ⛔ **Next** | Refactor the existing data layer to the v2 schema (§5) and Pigeon DTOs (§13). See §19 for the exact file-by-file change list. |
-| **CP3 → CP10** | ⛔ Not started | Proceed in order per §20 once CP2.5 is green. |
+| **CP2 — Data layer** | ✅ Done (superseded) | Original Room DB built on the v1 embeddings schema. |
+| **CP2.5 — Schema migration to landmark identity** | ✅ Done | Data layer migrated to the v2 schema (§5): `landmark_vector` only, no embeddings; Pigeon DTOs updated (§13). |
+| **CP3 → CP10** | ⛔ Not started | Proceed in order per §20. **CP3 is next.** |
 
-**Do CP2.5 first.** Everything downstream (identity, capture, recall) assumes the v2 schema.
+**CP3 is next.** Everything downstream (identity, capture, recall) assumes the v2 schema, which is now in place.
 
 ---
 
@@ -770,20 +769,21 @@ still works (CP1 behavior preserved).
 ## 20. Build checkpoints
 
 Work sequentially. Each checkpoint is independently demoable. Verify the definition of done before
-proceeding. (CP1 ✅, CP2 ⚠️ on old schema → do **CP2.5** first, then CP3 onward.)
+proceeding. (CP1 ✅, CP2 ✅, CP2.5 ✅ → **CP3 is next**, then CP4 onward.)
 
 ### CHECKPOINT 1 — Project skeleton & Pigeon bridge — ✅ DONE
 Flutter shell (4 screens) + Pigeon API + `MemoryBackendChannel` (canned data) + `MainActivity` host.
 **DoD (met):** `RecallScreen` calls `captureRecallContext()` and gets a hardcoded DTO; app runs.
 
-### CHECKPOINT 2 — Data layer — ⚠️ DONE (old schema)
-Room DB + entities + DAOs + `MemoryRepository` + `DemoSeeder` + `DtoMappers` exist, but on the v1
-embeddings schema. **Superseded by CP2.5.**
+### CHECKPOINT 2 — Data layer — ✅ DONE (superseded by CP2.5)
+Original Room DB + entities + DAOs + `MemoryRepository` + `DemoSeeder` + `DtoMappers`, built on the
+v1 embeddings schema.
 
-### CHECKPOINT 2.5 — Schema migration to landmark identity — ⛔ NEXT
-Apply §19. **DoD:** §19.2.
+### CHECKPOINT 2.5 — Schema migration to landmark identity — ✅ DONE
+Applied §19: data layer migrated to the v2 landmark schema (`landmark_vector` only, no embeddings);
+Pigeon DTOs updated. **DoD met** per §19.2.
 
-### CHECKPOINT 3 — ExecuTorch model runner (MediaPipe)
+### CHECKPOINT 3 — ExecuTorch model runner (MediaPipe) — ⛔ NEXT
 - ExecuTorch AAR in `android/app/libs/`.
 - `ExecuTorchModelRunner.detectFaces()` loads `mediapipe_face_detection.pte` → `List<FaceBox>`.
 - `ExecuTorchModelRunner.extractLandmarks()` loads `mediapipe_face_landmark_detector.pte` →
