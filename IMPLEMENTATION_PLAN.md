@@ -921,6 +921,9 @@ Apply §21. **DoD:** §21.2.
   `getTranscriptWindow()`; encoder/decoder latency tracked; `SpeechRecognizer` fallback.
 - **DoD:** Spoken sentence → correct transcript within ~2 s; fallback activates cleanly on binary
   load failure.
+- **Status:** 🟡 `LogMelSpectrogram` (PCM16→80×3000) + `TranscriptBuffer` (rolling 30 s) +
+  `SpeechRecognizerFallback` implemented; `QnnModelRunner.transcribe` wires mel→native. Front-end/buffer
+  covered by JVM unit tests (not run here). Native decode + ~2 s DoD pending QAIRT + S25. See §24.3.
 
 ### CHECKPOINT 6 — Capture loop (full write path)
 - `MemoryForegroundService` starts `CaptureLoop` (camera + mic + location). Tick ~5 s: frame →
@@ -1023,6 +1026,28 @@ implemented. Deviations:
 tests** (center face chosen, edge/small ignored, cosine/averaging) — but they were **not executed
 here** (no JDK). Run `./gradlew :app:testDebugUnitTest` on a machine with the Android toolchain. The
 live camera demo (green+name / red) needs CP6/CP7 + the S25.
+
+### 24.3 CP5 deviations & status
+Whisper ASR path implemented on **`QnnModelRunner`** (v4.1 rename of `WhisperQnnRunner`), plus the
+front-end + buffer. Deviations:
+1. `ai/LogMelSpectrogram.kt` is a faithful Kotlin port of `whisper.audio.log_mel_spectrogram`
+   (reflect-pad STFT n_fft=400/hop=160, Slaney mel, log10 + `(max(x,max-8)+4)/4`). ⚠️ **Numeric parity
+   with the Python reference is unverified here** — validate against a known clip before trusting
+   transcripts.
+2. `capture/TranscriptBuffer.kt` holds the rolling 30 s PCM ring + a transcript cache
+   (`getTranscriptWindow()` returns the cached text; `window()` returns the audio).
+3. `capture/SpeechRecognizerFallback.kt` wraps Android `SpeechRecognizer`. It recognizes from the
+   **live mic**, not a PCM buffer, so the capture loop (CP6) starts it when
+   `QnnModelRunner.isWhisperAvailable()` is false; `transcribe()` itself returns "" in that case.
+4. Encoder/decoder **latency split** runs inside native; CP5 records overall `asr` latency.
+   `whisper_encoder`/`whisper_decoder` stage constants exist for native to report later.
+5. The native `whisperTranscribe` (encoder→decoder→detokenize over the 80×3000 features) remains the
+   QNN skeleton's `TODO`, gated on the QAIRT libs.
+
+**Build/DoD status:** front-end + buffer have **JVM unit tests** (mel shape 80×3000 + normalization;
+ring rolling) — **not run here** (no JDK). The "~2 s transcript" DoD needs the native decode + QAIRT
+libs + S25; the `SpeechRecognizer` fallback path needs the device. Logic compiles + degrades
+gracefully (no Whisper ⇒ "").
 
 ---
 

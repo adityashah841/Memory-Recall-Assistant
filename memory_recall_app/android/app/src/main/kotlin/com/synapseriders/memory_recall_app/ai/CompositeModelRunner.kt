@@ -32,6 +32,9 @@ class CompositeModelRunner(context: Context) : OnDeviceModelRunner {
 
     override fun generate(prompt: String, maxTokens: Int): String = genie.generate(prompt, maxTokens)
 
+    /** Whether on-device Whisper is loaded; false ⇒ capture should use the SpeechRecognizer fallback. */
+    fun isWhisperAvailable(): Boolean = qnn.isWhisperAvailable()
+
     /** Warm every available backend once (call off the UI thread, §18). Never throws. */
     override fun warmUp() {
         assets.logReport()

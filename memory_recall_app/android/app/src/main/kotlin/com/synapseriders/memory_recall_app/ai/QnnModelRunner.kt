@@ -26,6 +26,11 @@ class QnnModelRunner(
     @Volatile private var cavaHandle = 0L
     @Volatile private var whisperHandle = 0L
 
+    private val logMel by lazy { LogMelSpectrogram() }
+
+    /** Whether the Whisper QNN path is loaded — capture layer uses this to pick the fallback (§6). */
+    fun isWhisperAvailable(): Boolean = whisperHandle != 0L
+
     /** Load the QNN backend + CavaFace/Whisper context binaries once. Never throws. */
     fun warmUp() {
         if (!NativeInference.loaded) {
@@ -67,14 +72,21 @@ class QnnModelRunner(
     }
 
     /**
-     * Whisper transcript for the PCM16 window. CP3 only wires loading; the log-mel front-end and
-     * decode loop land in **CP5** (§22), so this returns "" until then (callers use the
-     * `SpeechRecognizer` fallback). [sampleRate] is retained for the CP5 mel front-end.
+     * Whisper transcript for the PCM16 [pcmAudio] window (§6): PCM16 → log-mel `float32[1,80,3000]` →
+     * native encoder/decoder. Returns "" when Whisper is unavailable (caller uses the
+     * `SpeechRecognizer` fallback). The full encoder/decoder decode loop runs in native.
      */
     fun transcribe(pcmAudio: ShortArray, sampleRate: Int): String {
-        if (whisperHandle == 0L) return ""
-        Log.d(TAG, "transcribe(${pcmAudio.size} samples @ ${sampleRate}Hz) — mel front-end pending CP5")
-        return ""
+        if (whisperHandle == 0L) { warmUp(); if (whisperHandle == 0L) return "" }
+        if (pcmAudio.isEmpty()) return ""
+        return StageLatency.measure(StageLatency.ASR) {
+            try {
+                val features = logMel.compute(pcmAudio, sampleRate)
+                NativeInference.whisperTranscribe(whisperHandle, features)
+            } catch (t: Throwable) {
+                Log.w(TAG, "transcribe failed", t); ""
+            }
+        }
     }
 
     fun close() {

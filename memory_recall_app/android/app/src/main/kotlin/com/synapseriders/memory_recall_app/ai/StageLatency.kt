@@ -17,6 +17,8 @@ object StageLatency {
     const val FACE_EMBEDDING = "face_embedding"
     const val IDENTITY_MATCH = "identity_match"
     const val ASR = "asr"
+    const val WHISPER_ENCODER = "whisper_encoder"
+    const val WHISPER_DECODER = "whisper_decoder"
     const val LLM_GENERATION = "llm_generation"
 
     private const val TAG = "MemoryLatency"
