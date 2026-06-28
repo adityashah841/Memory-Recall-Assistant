@@ -94,4 +94,7 @@ dependencies {
     implementation("org.pytorch:executorch-android:1.3.1")
     // Optional override: drop a specific executorch AAR into app/libs/ to pin a matching runtime.
     implementation(fileTree("libs") { include("*.aar") })
+
+    // CP4: JVM unit tests for the identity geometry/matching logic (src/test).
+    testImplementation("junit:junit:4.13.2")
 }

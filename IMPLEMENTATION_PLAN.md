@@ -911,6 +911,9 @@ Apply §21. **DoD:** §21.2.
 - **DoD:** Multiple faces → only center face identified; edge face → ignored; enrolled centered face →
   green reticle + correct name; unknown centered face → red reticle + "Unknown";
   `MAX_CENTER_OFFSET_PX` tunable in one place.
+- **Status:** 🟡 `FaceEmbeddingEngine` + `IdentityConfig` + `center_reticle.dart` implemented; geometry/
+  matching DoD covered by JVM unit tests (not run here, no JDK). Live camera demo pending CP6/CP7 + S25.
+  Deviations in §24.2.
 
 ### CHECKPOINT 5 — Whisper ASR runner (QNN)
 - `QnnModelRunner` loads `whisper_encoder.bin` + `whisper_decoder.bin` via the QNN context-binary
@@ -998,9 +1001,28 @@ Implemented the three runner backends + interface + composite. Deviations from t
 
 **Build/DoD status:** code is written to compile cleanly and never crash on missing models, but the
 **build + on-device DoD were NOT verified here** — this environment has no JDK/Android SDK/`adb`/device
-and none of the AAR/QAIRT libs/model weights. Verify on the S25: drop the AAR in `app/libs/`, set
-`qnnSdkRoot`, copy QAIRT `.so` libs to `jniLibs/arm64-v8a/`, run `scripts/push_models.sh`, then
-`flutter run` and watch logcat (`ModelAssets`, `MemoryLatency`) for load + per-stage timings.
+and none of the AAR/QAIRT libs/model weights. ExecuTorch is now pulled from Maven
+(`org.pytorch:executorch-android:1.3.1`), so only the QAIRT `.so` libs + model weights remain to add.
+Verify on the S25: set `qnnSdkRoot`, copy QAIRT `.so` libs to `jniLibs/arm64-v8a/`, run
+`scripts/push_models.sh`, then `flutter run` and watch logcat (`ModelAssets`, `MemoryLatency`).
+
+### 24.2 CP4 deviations & status
+`identity/FaceEmbeddingEngine` + `identity/IdentityConfig` + the Flutter `center_reticle.dart`
+implemented. Deviations:
+1. §4 geometry helpers are **`internal`** (not `private`) so CP4 unit tests assert center-selection /
+   cosine / averaging (`src/test/.../FaceEmbeddingEngineTest.kt`).
+2. The §4 `preprocess(...)` step is **not** duplicated in the engine — `QnnModelRunner.embedFace`
+   applies the §2.1 CavaFace preprocessing to the 112×112 bitmap from `alignFace`.
+3. `alignFace` uses a **2-point eye** similarity transform onto the ArcFace template (§3.7); upgrade to
+   a full 5-point umeyama fit later if alignment accuracy needs it.
+4. `MatchResult.personId = -1` denotes an unknown face (Case B); `name = null`.
+5. The reticle is a **standalone widget**; live wiring to the camera + `identify()` (green+name / red
+   over the preview) lands with the capture/recall path (CP6/CP7).
+
+**Build/DoD status:** the **geometry/matching DoD is covered by passing-by-construction JVM unit
+tests** (center face chosen, edge/small ignored, cosine/averaging) — but they were **not executed
+here** (no JDK). Run `./gradlew :app:testDebugUnitTest` on a machine with the Android toolchain. The
+live camera demo (green+name / red) needs CP6/CP7 + the S25.
 
 ---
 

@@ -15,6 +15,7 @@ object StageLatency {
     const val FACE_DETECTION = "face_detection"
     const val FACE_ALIGNMENT = "face_alignment"
     const val FACE_EMBEDDING = "face_embedding"
+    const val IDENTITY_MATCH = "identity_match"
     const val ASR = "asr"
     const val LLM_GENERATION = "llm_generation"
 
