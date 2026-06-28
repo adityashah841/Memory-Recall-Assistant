@@ -7,8 +7,7 @@ import androidx.room.Insert
 import androidx.room.Query
 
 /**
- * A session row joined with its person's name, for timeline/debug display without
- * leaking embeddings into the join result.
+ * A session row joined with its person's name, for timeline/debug display.
  */
 data class SessionWithPersonName(
     @Embedded val session: MemorySessionEntity,
@@ -31,19 +30,15 @@ interface SessionDao {
         LIMIT :limit OFFSET :offset
         """,
     )
-    suspend fun getPaged(limit: Long, offset: Long): List<SessionWithPersonName>
+    suspend fun listPaged(limit: Long, offset: Long): List<SessionWithPersonName>
 
     /** Person filter — candidate narrowing for Case A (Section 10.2). */
     @Query("SELECT * FROM session_table WHERE person_id = :personId ORDER BY timestamp DESC")
-    suspend fun getByPerson(personId: Long): List<MemorySessionEntity>
-
-    /** No-person filter — Case C. */
-    @Query("SELECT * FROM session_table WHERE person_id IS NULL ORDER BY timestamp DESC")
-    suspend fun getWithoutPerson(): List<MemorySessionEntity>
+    suspend fun findByPersonId(personId: Long): List<MemorySessionEntity>
 
     /**
      * Vicinity filter for a known person (Section 10.2): same `location_label` OR within the
-     * lat/lng bounding box derived from the vicinity radius. The repository computes the box.
+     * lat/lng bounding box derived from the vicinity radius (the repository computes the box).
      */
     @Query(
         """
@@ -56,7 +51,7 @@ interface SessionDao {
         ORDER BY timestamp DESC
         """,
     )
-    suspend fun getByPersonInVicinity(
+    suspend fun vicinity(
         personId: Long,
         locationLabel: String?,
         minLat: Double,
@@ -65,25 +60,9 @@ interface SessionDao {
         maxLng: Double,
     ): List<MemorySessionEntity>
 
-    /** Vicinity filter for the no-person case (Section 10.2 / 9.C). */
-    @Query(
-        """
-        SELECT * FROM session_table
-        WHERE person_id IS NULL
-          AND (
-            (:locationLabel IS NOT NULL AND location_label = :locationLabel)
-            OR (latitude BETWEEN :minLat AND :maxLat AND longitude BETWEEN :minLng AND :maxLng)
-          )
-        ORDER BY timestamp DESC
-        """,
-    )
-    suspend fun getWithoutPersonInVicinity(
-        locationLabel: String?,
-        minLat: Double,
-        maxLat: Double,
-        minLng: Double,
-        maxLng: Double,
-    ): List<MemorySessionEntity>
+    /** Most-recent sessions regardless of subject (recency signal for ranking; Section 10.3). */
+    @Query("SELECT * FROM session_table ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun findRecent(limit: Long): List<MemorySessionEntity>
 
     @Query("SELECT COUNT(*) FROM session_table")
     suspend fun count(): Long

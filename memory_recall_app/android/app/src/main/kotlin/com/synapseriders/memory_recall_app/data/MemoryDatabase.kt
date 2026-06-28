@@ -12,7 +12,7 @@ import androidx.room.RoomDatabase
  */
 @Database(
     entities = [PersonProfileEntity::class, MemorySessionEntity::class],
-    version = 1,
+    version = 2, // v2 landmark schema (Checkpoint 2.5)
     exportSchema = false,
 )
 abstract class MemoryDatabase : RoomDatabase() {
@@ -30,7 +30,11 @@ abstract class MemoryDatabase : RoomDatabase() {
                     context.applicationContext,
                     MemoryDatabase::class.java,
                     "memory_recall.db",
-                ).build().also { INSTANCE = it }
+                )
+                    // Hackathon-stage: no hand-written migration; drop & recreate on schema bump.
+                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    .build()
+                    .also { INSTANCE = it }
             }
     }
 }

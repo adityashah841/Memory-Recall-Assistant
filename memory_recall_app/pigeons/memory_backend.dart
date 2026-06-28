@@ -60,7 +60,6 @@ class RecallAnswerDto {
 class PersonProfileDto {
   int personId;
   String? name;
-  String? referenceFaceImagePath;
   String? contextNotes;
 }
 

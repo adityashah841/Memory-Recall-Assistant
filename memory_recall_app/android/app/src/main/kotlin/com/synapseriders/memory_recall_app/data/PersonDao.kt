@@ -10,11 +10,12 @@ interface PersonDao {
     @Insert
     suspend fun insert(person: PersonProfileEntity): Long
 
+    /** Full table fetch for the landmark scan during identification (Section 7). */
     @Query("SELECT * FROM person_profile_table ORDER BY person_id")
-    suspend fun getAll(): List<PersonProfileEntity>
+    suspend fun findAll(): List<PersonProfileEntity>
 
     @Query("SELECT * FROM person_profile_table WHERE person_id = :personId")
-    suspend fun getById(personId: Long): PersonProfileEntity?
+    suspend fun findById(personId: Long): PersonProfileEntity?
 
     @Query("SELECT COUNT(*) FROM person_profile_table")
     suspend fun count(): Long

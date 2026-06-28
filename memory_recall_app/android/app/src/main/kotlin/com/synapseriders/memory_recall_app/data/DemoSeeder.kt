@@ -3,10 +3,11 @@ package com.synapseriders.memory_recall_app.data
 import java.util.Random
 
 /**
- * Populates a coherent demo knowledge graph (Section 15): 2 people with face embeddings and 5
- * sessions spread across a couple of locations and timestamps — enough to exercise all three
- * recall cases (known person, and a no-person Case C row). Embeddings are deterministic unit
- * vectors so demo runs are reproducible.
+ * Populates a coherent demo knowledge graph (Section 15, v2 landmark schema): 2 people each with a
+ * `landmark_vector` and 5 sessions spread across a couple of locations and timestamps — enough to
+ * exercise the recall cases (known person + a no-person Case C row). Landmark vectors are
+ * deterministic unit vectors so demo runs are reproducible. No face images or embeddings are stored
+ * (Checkpoint 2.5).
  */
 class DemoSeeder(
     private val personDao: PersonDao,
@@ -18,20 +19,10 @@ class DemoSeeder(
         val hour = 3_600_000L
 
         val priyaId = personDao.insert(
-            person(
-                name = "Priya",
-                notes = "Met at the office cafe; talked about her Kyoto trip.",
-                seed = 1,
-                now = now,
-            ),
+            person(name = "Priya", notes = "Met at the office cafe; talked about her Kyoto trip.", seed = 1, now = now),
         )
         val marcoId = personDao.insert(
-            person(
-                name = "Marco",
-                notes = "Climbing gym regular.",
-                seed = 2,
-                now = now,
-            ),
+            person(name = "Marco", notes = "Climbing gym regular.", seed = 2, now = now),
         )
 
         // 5 sessions: Priya x2 + Marco x2 (Case A history) + a no-person row (Case C).
@@ -44,7 +35,6 @@ class DemoSeeder(
                 ts = now - 2 * 24 * hour,
                 frame = "frames/priya_cafe_1.jpg",
                 transcript = "Priya: Kyoto was incredible, the temples in Arashiyama were the highlight.",
-                seed = 11,
             ),
         )
         sessionDao.insert(
@@ -56,7 +46,6 @@ class DemoSeeder(
                 ts = now - 5 * hour,
                 frame = "frames/priya_cafe_2.jpg",
                 transcript = "Priya: I'm planning a winter trip to Hokkaido next.",
-                seed = 12,
             ),
         )
         sessionDao.insert(
@@ -68,7 +57,6 @@ class DemoSeeder(
                 ts = now - 24 * hour,
                 frame = "frames/marco_gym_1.jpg",
                 transcript = "Marco: I finally sent that V6 on the overhang wall.",
-                seed = 13,
             ),
         )
         sessionDao.insert(
@@ -80,7 +68,6 @@ class DemoSeeder(
                 ts = now - 3 * hour,
                 frame = "frames/marco_gym_2.jpg",
                 transcript = "Marco: Let's plan an outdoor trip to Bishop next month.",
-                seed = 14,
             ),
         )
         sessionDao.insert(
@@ -92,17 +79,14 @@ class DemoSeeder(
                 ts = now - 6 * hour,
                 frame = "frames/desk_whiteboard.jpg",
                 transcript = "Reminder note on the whiteboard about the Friday demo.",
-                seed = 15,
             ),
         )
     }
 
     private fun person(name: String, notes: String, seed: Int, now: Long) = PersonProfileEntity(
         name = name,
-        referenceFaceImage = "faces/${name.lowercase()}.jpg",
-        faceEmbedding = EmbeddingCodec.toBlob(unitVector(FACE_DIM, seed)),
+        landmarkVector = LandmarkCodec.toBlob(unitVector(LANDMARK_DIM, seed)),
         contextNotes = notes,
-        voiceId = null,
         createdAt = now,
         updatedAt = now,
     )
@@ -115,7 +99,6 @@ class DemoSeeder(
         ts: Long,
         frame: String,
         transcript: String,
-        seed: Int,
     ) = MemorySessionEntity(
         personId = personId,
         locationLabel = label,
@@ -123,21 +106,19 @@ class DemoSeeder(
         longitude = lng,
         timestamp = ts,
         frameImage = frame,
-        voiceClip = "clips/clip_$seed.m4a",
+        voiceClip = null,
         transcript = transcript,
-        frameEmbedding = EmbeddingCodec.toBlob(unitVector(CLIP_DIM, seed)),
-        voiceEmbedding = EmbeddingCodec.toBlob(unitVector(CLIP_DIM, seed + 100)),
         createdAt = ts,
     )
 
     private fun unitVector(dim: Int, seed: Int): FloatArray {
         val rnd = Random(seed.toLong())
         val v = FloatArray(dim) { rnd.nextFloat() * 2f - 1f }
-        return EmbeddingCodec.l2Normalize(v)
+        return LandmarkCodec.l2Normalize(v)
     }
 
     private companion object {
-        const val FACE_DIM = 512 // MobileFaceNet / ArcFace
-        const val CLIP_DIM = 512 // MobileCLIP-S2
+        // 468 MediaPipe face-mesh landmarks x (x, y) = 936.
+        const val LANDMARK_DIM = 936
     }
 }

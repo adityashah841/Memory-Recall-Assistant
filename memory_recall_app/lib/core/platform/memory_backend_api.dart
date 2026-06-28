@@ -353,7 +353,6 @@ class PersonProfileDto {
   PersonProfileDto({
     required this.personId,
     this.name,
-    this.referenceFaceImagePath,
     this.contextNotes,
   });
 
@@ -361,15 +360,12 @@ class PersonProfileDto {
 
   String? name;
 
-  String? referenceFaceImagePath;
-
   String? contextNotes;
 
   List<Object?> _toList() {
     return <Object?>[
       personId,
       name,
-      referenceFaceImagePath,
       contextNotes,
     ];
   }
@@ -382,8 +378,7 @@ class PersonProfileDto {
     return PersonProfileDto(
       personId: result[0]! as int,
       name: result[1] as String?,
-      referenceFaceImagePath: result[2] as String?,
-      contextNotes: result[3] as String?,
+      contextNotes: result[2] as String?,
     );
   }
 
@@ -396,7 +391,7 @@ class PersonProfileDto {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(personId, other.personId) && _deepEquals(name, other.name) && _deepEquals(referenceFaceImagePath, other.referenceFaceImagePath) && _deepEquals(contextNotes, other.contextNotes);
+    return _deepEquals(personId, other.personId) && _deepEquals(name, other.name) && _deepEquals(contextNotes, other.contextNotes);
   }
 
   @override
@@ -405,7 +400,7 @@ class PersonProfileDto {
 
   @override
   String toString() {
-    return 'PersonProfileDto(personId: $personId, name: $name, referenceFaceImagePath: $referenceFaceImagePath, contextNotes: $contextNotes)';
+    return 'PersonProfileDto(personId: $personId, name: $name, contextNotes: $contextNotes)';
   }
 }
 

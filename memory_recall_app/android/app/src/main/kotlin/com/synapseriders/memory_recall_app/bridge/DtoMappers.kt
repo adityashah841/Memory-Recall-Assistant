@@ -24,6 +24,5 @@ fun SessionWithPersonName.toDto(): MemorySessionDto {
 fun PersonProfileEntity.toDto(): PersonProfileDto = PersonProfileDto(
     personId = personId,
     name = name,
-    referenceFaceImagePath = referenceFaceImage,
     contextNotes = contextNotes,
 )

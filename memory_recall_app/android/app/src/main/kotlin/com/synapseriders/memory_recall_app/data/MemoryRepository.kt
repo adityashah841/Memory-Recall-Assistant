@@ -12,9 +12,9 @@ class MemoryRepository(
 
     // --- Reads (timeline / debug) ---
     suspend fun listSessions(limit: Long, offset: Long): List<SessionWithPersonName> =
-        sessionDao.getPaged(limit, offset)
+        sessionDao.listPaged(limit, offset)
 
-    suspend fun listPeople(): List<PersonProfileEntity> = personDao.getAll()
+    suspend fun listPeople(): List<PersonProfileEntity> = personDao.findAll()
 
     suspend fun sessionCount(): Long = sessionDao.count()
 

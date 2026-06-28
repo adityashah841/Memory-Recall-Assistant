@@ -408,7 +408,6 @@ data class RecallAnswerDto (
 data class PersonProfileDto (
   val personId: Long,
   val name: String? = null,
-  val referenceFaceImagePath: String? = null,
   val contextNotes: String? = null
 )
  {
@@ -416,16 +415,14 @@ data class PersonProfileDto (
     fun fromList(pigeonVar_list: List<Any?>): PersonProfileDto {
       val personId = pigeonVar_list[0] as Long
       val name = pigeonVar_list[1] as String?
-      val referenceFaceImagePath = pigeonVar_list[2] as String?
-      val contextNotes = pigeonVar_list[3] as String?
-      return PersonProfileDto(personId, name, referenceFaceImagePath, contextNotes)
+      val contextNotes = pigeonVar_list[2] as String?
+      return PersonProfileDto(personId, name, contextNotes)
     }
   }
   fun toList(): List<Any?> {
     return listOf(
       personId,
       name,
-      referenceFaceImagePath,
       contextNotes,
     )
   }
@@ -437,19 +434,18 @@ data class PersonProfileDto (
       return true
     }
     val other = other as PersonProfileDto
-    return MemoryBackendApiPigeonUtils.deepEquals(this.personId, other.personId) && MemoryBackendApiPigeonUtils.deepEquals(this.name, other.name) && MemoryBackendApiPigeonUtils.deepEquals(this.referenceFaceImagePath, other.referenceFaceImagePath) && MemoryBackendApiPigeonUtils.deepEquals(this.contextNotes, other.contextNotes)
+    return MemoryBackendApiPigeonUtils.deepEquals(this.personId, other.personId) && MemoryBackendApiPigeonUtils.deepEquals(this.name, other.name) && MemoryBackendApiPigeonUtils.deepEquals(this.contextNotes, other.contextNotes)
   }
 
   override fun hashCode(): Int {
     var result = javaClass.hashCode()
     result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.personId)
     result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.name)
-    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.referenceFaceImagePath)
     result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.contextNotes)
     return result
   }
   override fun toString(): String {
-    return "PersonProfileDto(personId=$personId, name=$name, referenceFaceImagePath=$referenceFaceImagePath, contextNotes=$contextNotes)"
+    return "PersonProfileDto(personId=$personId, name=$name, contextNotes=$contextNotes)"
   }
 }
 

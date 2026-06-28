@@ -5,13 +5,11 @@ class PersonProfile {
   const PersonProfile({
     required this.personId,
     this.name,
-    this.referenceFaceImagePath,
     this.contextNotes,
   });
 
   final int personId;
   final String? name;
-  final String? referenceFaceImagePath;
   final String? contextNotes;
 
   bool get isNamed => name != null && name!.isNotEmpty;
@@ -20,7 +18,6 @@ class PersonProfile {
   factory PersonProfile.fromDto(PersonProfileDto dto) => PersonProfile(
         personId: dto.personId,
         name: dto.name,
-        referenceFaceImagePath: dto.referenceFaceImagePath,
         contextNotes: dto.contextNotes,
       );
 }

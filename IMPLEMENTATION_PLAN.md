@@ -157,10 +157,12 @@ Reproduced exactly in Sections 8 (insertion) and 9 (querying):
 
 ## 5. Data model (exact schema)
 
-> Storage engine: **Room over SQLite** (Kotlin). Embeddings are stored as `float32` little-endian
-> blobs. Vectors are **L2-normalized at write time** so similarity = dot product. Vector search for
-> the MVP is a **linear scan over a candidate set already narrowed by `person_id` + location**
-> (Section 10.2) — no ANN index required at hackathon scale.
+> Storage engine: **Room over SQLite** (Kotlin). **v2 landmark schema (Checkpoint 2.5).** The only
+> stored vector is `person_profile.landmark_vector` (face-mesh geometry), a `float32[936]`
+> little-endian blob, **L2-normalized at write time** so similarity = dot product. Identity matching
+> is a **linear landmark scan** over all profiles (Section 7) — no ANN index required at hackathon
+> scale. **No face images and no learned embeddings are stored** (privacy); session rows carry no
+> vectors. See §22 for the v1→v2 migration history.
 
 ### 5.1 `person_profile_table` (entity: `PersonProfileEntity`)
 The canonical record per distinct person. **Identity index.**
@@ -169,10 +171,8 @@ The canonical record per distinct person. **Identity index.**
 | --- | --- | --- | --- |
 | `person_id` | INTEGER PK (autoincrement) | no | Assigned as new people are encountered. |
 | `name` | TEXT | yes | Filled when known / during enrollment. |
-| `reference_face_image` | TEXT (path) | yes | Path to the canonical cropped face thumbnail. |
-| `face_embedding` | BLOB (`float32[512]`, ArcFace space) | no | **Identification only.** L2-normalized. |
+| `landmark_vector` | BLOB (`float32[936]`) | no | Face-mesh landmark geometry (468 pts × (x, y)). **Identification only.** L2-normalized. |
 | `context_notes` | TEXT | yes | Any context inferred at the time the person was added. |
-| `voice_id` | TEXT | yes | Optional speaker id/voiceprint reference. |
 | `created_at` | INTEGER (epoch ms) | no | |
 | `updated_at` | INTEGER (epoch ms) | no | |
 
@@ -190,15 +190,14 @@ One row per persisted event (tick that produced a meaningful record).
 | `frame_image` | TEXT (path) | no | Frame/thumbnail @ `timestamp`. |
 | `voice_clip` | TEXT (path) | yes | Audio clip for window `[prev_timestamp, curr_timestamp]`. |
 | `transcript` | TEXT | yes | ASR transcript for that same window. |
-| `frame_embedding` | BLOB (`float32[~512]`, CLIP image space) | no | L2-normalized. |
-| `voice_embedding` | BLOB (`float32[~512]`, CLIP text space) | yes | From `transcript`; same shared space. |
 | `created_at` | INTEGER (epoch ms) | no | |
 
-**Embedding decision (locked):** embeddings are **separate** — `frame_embedding` (image) and
-`voice_embedding` (transcript text) are stored as **two distinct vectors** on the session row, while
-`person_profile.face_embedding` is a **third, independent** vector used only for identity. Because
-`frame_embedding` and `voice_embedding` both live in the **shared MobileCLIP space**, a single text
-query embedding can be compared against **both** during vector search (Section 10).
+**Landmark decision (v2, Checkpoint 2.5):** identity is matched on
+`person_profile.landmark_vector` (face-mesh geometry) via a linear scan (Section 7). The v1
+embeddings (`face_embedding`, `frame_embedding`, `voice_embedding`) and the `reference_face_image`
+were **removed**; session rows carry **no vectors**. `frame_image` remains a non-face scene/frame
+thumbnail path. **Note:** Sections 7 and 10 still describe v1 embedding-based identification/retrieval
+and are pending a v2 revision — tracked in §22.
 
 ### 5.3 Indices & relations
 - Index `session_table(person_id)`; index `session_table(timestamp)`;
@@ -406,10 +405,9 @@ class RecallAnswerDto {
   List<EvidenceDto> evidence;
 }
 
-class PersonProfileDto {
+class PersonProfileDto {                // v2: no face-image path (Checkpoint 2.5)
   int personId;
   String? name;
-  String? referenceFaceImagePath;
   String? contextNotes;
 }
 
@@ -674,4 +672,29 @@ memory_recall_app/
 ---
 
 This document is the contract. Sub-agents: if you must deviate, update this file in the same change
-and note it in Section 17.
+and note it in §22.
+
+---
+
+## 22. Deviations & schema changelog
+
+> The task workflow references §§18–22; in this revision of the plan only §22 (this section) is
+> present. Sections 18–21 were not authored here. Record every deviation from the contract below.
+
+### Checkpoint 2.5 — v1 embeddings → v2 landmark schema
+**What changed.** Migrated the data layer off learned embeddings to face-mesh **landmark geometry**,
+driven by the privacy constraint *"do not store face images or embeddings."*
+
+- `person_profile_table`: removed `reference_face_image`, `face_embedding`, `voice_id`; added
+  `landmark_vector` BLOB `float32[936]` (non-null, L2-normalized).
+- `session_table`: removed `frame_embedding`, `voice_embedding`; FK + the three indices retained.
+- `EmbeddingCodec` → `LandmarkCodec` (generic `float32[]` ↔ blob + L2 norm).
+- `PersonProfileDto`: dropped `referenceFaceImagePath`; Pigeon bindings regenerated.
+- `MemoryDatabase`: version 1 → 2 with `fallbackToDestructiveMigration(dropAllTables = true)`
+  (hackathon-stage; no hand-written migration).
+- §5 and §11.1 updated above to match.
+
+**Still inconsistent (follow-up needed).** §7 (identification) and §10 (recall/retrieval) still
+describe the v1 embedding approach (`face_embedding` cosine match; `frame`/`voice` CLIP vector
+search). They must be revised to the v2 landmark scan + non-vector retrieval in a later checkpoint.
+The recall pipeline remains stubbed in code until then, so no behavior depends on the stale text yet.
