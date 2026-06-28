@@ -42,7 +42,8 @@ no `LandmarkIdentityEngine` to delete — v4 introduces `FaceEmbeddingEngine` fr
 | v1 | CavaFace float TFLite — original plan |
 | v2 | Landmark geometry — privacy pivot after judge feedback (~64% uncontrolled accuracy) |
 | v3 | CavaFace w8a16 ExecuTorch — reverted after accuracy concern + consent UX added |
-| v4 | CavaFace w8a16 ExecuTorch — consent complexity removed, **center-crop targeting** added |
+| v4 | CavaFace w8a16 — consent complexity removed, **center-crop targeting** added |
+| v4.1 | **Model formats corrected to as-delivered:** CavaFace + Whisper are **QNN context binaries** (`.bin`), the LLM is a **QNN Genie** bundle (not `.pte`); only detection + landmark are ExecuTorch. Weights **pushed to device**, not bundled. |
 
 v4 is the clean, buildable version. **No** consent screen, **no** `ConsentManager`, **no**
 `LandmarkIdentityEngine`. Just: detect faces → find center face → align → embed → match.
@@ -51,17 +52,31 @@ v4 is the clean, buildable version. **No** consent screen, **no** `ConsentManage
 
 ## 2. Model stack (final, locked for v4)
 
-All model files live under `android/app/src/main/assets/models/`.
+Model files are **pushed to the device** (not bundled in the APK) and loaded by path from the app's
+external files dir — see §16. The small `.pte` may optionally be bundled; the large `.bin`/Genie
+weights must not be (size + GitHub limits).
 
 | Purpose | File | Format | Runtime | Quantization |
 | --- | --- | --- | --- | --- |
 | Face detection | `mediapipe_face_detection.pte` | ExecuTorch | QNN/NPU | float |
 | Face landmark (**alignment only**) | `mediapipe_face_landmark_detector.pte` | ExecuTorch | QNN/NPU | float |
-| Face embedding / identity | `cavaface.pte` | ExecuTorch | QNN/NPU | **w8a16** |
+| Face embedding / identity | `cavaface.bin` | **QNN context binary** | QNN/NPU | **w8a16** |
 | ASR encoder | `whisper_encoder.bin` | **QNN context binary** | QNN/NPU | **w8a16** |
 | ASR decoder | `whisper_decoder.bin` | **QNN context binary** | QNN/NPU | **w8a16** |
-| LLM (cue + answer) | `llama3_2_1b_instruct.pte` | ExecuTorch | QNN/NPU | **w4a16** |
+| LLM (cue + answer) | `llama_v3_2_1b_instruct` Genie bundle (`part{1,2,3}_of_3.bin` + `genie_config.json` + `tokenizer.json`) | **QNN Genie** | QNN/NPU | **w4** |
 | ASR tensor specs | `metadata.json` | JSON | reference | — |
+
+> **v4.1 correction — model formats as actually delivered (Snapdragon 8 Elite, `soc_model 69`,
+> `dsp_arch v79`).** Three on-device runtimes are in play, not just ExecuTorch:
+> - **ExecuTorch (`.pte`):** face **detection** + **landmark** only.
+> - **QNN context binary (`.bin`):** **CavaFace** (`cavaface.bin`) and **Whisper**
+>   (`whisper_encoder.bin` + `whisper_decoder.bin`), loaded via the raw QNN context-binary API.
+> - **QNN Genie:** the **LLM** (Llama 3.2 1B Instruct, w4) ships as a Genie bundle — 3 context-binary
+>   parts + `genie_config.json` + `tokenizer.json` — driven through the QAIRT **Genie** dialog API
+>   (`QnnHtp` backend). It is **not** a single `.pte`.
+>
+> All three runtimes need the matching **QAIRT 2.45** runtime `.so` libs (the binaries were built with
+> qairt 2.45.0). See §16 for on-device placement (models are **pushed to the device**, not bundled).
 
 ### 2.1 CavaFace specs
 - Input: `float32[1, 3, 112, 112]` — CHW, pixel values normalized to `[-1, 1]`.
@@ -71,8 +86,15 @@ All model files live under `android/app/src/main/assets/models/`.
 - Match threshold: `TAU_KNOWN = 0.60f`.
 - Model size: ~62 MB quantized (w8a16) — load once at service start, keep warm, never reload.
 
-> Whisper is the **only** model that is **not** ExecuTorch — it loads via the QNN SDK context-binary
-> API. MediaPipe landmarks are used for **alignment only**, never for identity.
+> **Only face detection + landmark are ExecuTorch.** CavaFace and Whisper load via the QNN SDK
+> context-binary API; the LLM loads via QNN Genie. MediaPipe landmarks are used for **alignment
+> only**, never for identity.
+>
+> ⚠️ **CavaFace I/O caveat:** the `float32[1,3,112,112]` input / `float32[1,512]` output above is the
+> *logical* spec. As a **w8a16 QNN** binary, `cavaface.bin`'s actual graph I/O is **quantized**
+> (scale/zero-point per tensor) and there is **no `metadata.json` for it** (unlike Whisper). The exact
+> input/output tensor names, dtypes and quant params must be read from the `.bin` (or supplied by the
+> model authors) before the embedder can be wired.
 
 ---
 
@@ -102,9 +124,9 @@ Crop selected face region
 [mediapipe_face_landmark_detector.pte]  →  5 key points (eyes, nose, mouth corners)
   used for geometric ALIGNMENT only: rotate eye-line horizontal, scale to 112×112
         ↓
-[cavaface.pte] via ExecuTorch
-  input  float32[1, 3, 112, 112] (normalized aligned face)
-  output float32[1, 512] (L2-normalized embedding)
+[cavaface.bin] via QNN SDK (context binary)
+  input  float32[1, 3, 112, 112] (normalized aligned face; quantized w8a16 at the graph boundary)
+  output float32[1, 512] (L2-normalized embedding; dequantized)
         ↓
 Cosine similarity (dot product) vs all stored face_embedding in person_profile_table
         ↓
@@ -259,7 +281,13 @@ Store in session_table.transcript
 
 ---
 
-## 7. LLM pipeline (Llama 3.2 1B via ExecuTorch) — unchanged from v3
+## 7. LLM pipeline (Llama 3.2 1B via QNN Genie)
+
+> **Runtime (v4.1):** the LLM is **not** ExecuTorch. It is a **QAIRT Genie** bundle —
+> `part{1,2,3}_of_3.bin` (w4 context binaries) + `genie_config.json` + `htp_backend_ext_config.json`
+> + `tokenizer.json`. It is driven via the **Genie dialog API** (`GenieDialog_*`, `QnnHtp` backend),
+> which owns tokenization, KV-cache and sampling internally. The prompts below are unchanged; only the
+> runner changes (`GenieLlmRunner`, §8).
 
 ### 7.1 Recall-cue prompt
 ```text
@@ -293,11 +321,13 @@ Answer with evidence:
 ```
 
 ### 7.3 LLM settings
-- Recall cue: `max_tokens=60`, `temperature=0.3`.
-- Answer: `max_tokens=200`, `temperature=0.3`.
-- Stop tokens: `["\n\n", "<|eot_id|>"]`.
-- Template fallback on timeout > 5 s: `"This is {name}."`
-- Quantization: **w4a16**.
+- Recall cue: `max_tokens=60`. Answer: `max_tokens=200`.
+- Sampler (from `genie_config.json`): `temp=0.8`, `top-k=40`, `top-p=0.95`, `seed=42`. Override per
+  call to `temp≈0.3` for the deterministic recall/answer style if desired.
+- Context size: **4096** tokens; `n-threads=3`; `QnnHtp` backend, `cpu-mask=0xe0`, `kv-dim=64`.
+- BOS `128000`; EOS any of `[128001, 128008, 128009]`; RoPE llama3 scaling (`theta=500000`, `factor=8`).
+- Template fallback on timeout > 5 s or Genie load failure: `"This is {name}."` — **never crash**.
+- Quantization: **w4** (weights), Genie-managed activations.
 
 ---
 
@@ -330,9 +360,10 @@ Answer with evidence:
 | ai/          OnDeviceModelRunner (interface)             |
 |              ExecuTorchModelRunner                       |
 |                (mediapipe_face_detection.pte,            |
-|                 mediapipe_face_landmark_detector.pte,    |
-|                 cavaface.pte, llama3_2_1b_instruct.pte)  |
-|              WhisperQnnRunner (encoder.bin+decoder.bin)  |
+|                 mediapipe_face_landmark_detector.pte)    |
+|              QnnModelRunner (raw QNN context binaries)   |
+|                (cavaface.bin, whisper encoder+decoder)   |
+|              GenieLlmRunner (Llama 3.2 1B Genie bundle)  |
 |              FakeModelRunner (tests/CI only)             |
 |                                                          |
 | identity/    FaceEmbeddingEngine                         |
@@ -359,9 +390,10 @@ Answer with evidence:
 ### 8.2 AI module split
 | Class | Models | Runtime |
 | --- | --- | --- |
-| `ExecuTorchModelRunner` | `mediapipe_face_detection.pte`, `mediapipe_face_landmark_detector.pte`, `cavaface.pte`, `llama3_2_1b_instruct.pte` | ExecuTorch AAR |
-| `WhisperQnnRunner` | `whisper_encoder.bin`, `whisper_decoder.bin` | QNN SDK |
-| `FaceEmbeddingEngine` | Orchestrates center crop → alignment → CavaFace → match | Wraps `ExecuTorchModelRunner` |
+| `ExecuTorchModelRunner` | `mediapipe_face_detection.pte`, `mediapipe_face_landmark_detector.pte` | ExecuTorch AAR |
+| `QnnModelRunner` | `cavaface.bin`, `whisper_encoder.bin`, `whisper_decoder.bin` | QNN SDK (context binary) |
+| `GenieLlmRunner` | `part{1,2,3}_of_3.bin` + `genie_config.json` + `tokenizer.json` | QAIRT Genie |
+| `FaceEmbeddingEngine` | Orchestrates center crop → alignment → CavaFace → match | Detection/landmark via `ExecuTorchModelRunner`, embed via `QnnModelRunner` |
 | `FakeModelRunner` | Deterministic stubs | Tests/CI only — **never** in demo build |
 
 ### 8.3 `OnDeviceModelRunner` interface
@@ -647,32 +679,44 @@ memory_recall_app/
       bridge/        { MemoryBackendChannel.kt, DtoMappers.kt }
       service/       { MemoryForegroundService.kt, CaptureLoop.kt }
       capture/       { CameraFrameProvider.kt, TranscriptBuffer.kt, LocationProvider.kt, DemoContextProvider.kt }
-      ai/            { OnDeviceModelRunner.kt, ExecuTorchModelRunner.kt, WhisperQnnRunner.kt, FakeModelRunner.kt }
+      ai/            { OnDeviceModelRunner.kt, ExecuTorchModelRunner.kt, QnnModelRunner.kt, GenieLlmRunner.kt, ModelAssets.kt, FakeModelRunner.kt }
       identity/      { FaceEmbeddingEngine.kt, IdentityConfig.kt }
       recall/        { RecallEngine.kt, RetrievalRanker.kt, QuestionSuggestionEngine.kt, AnswerGenerator.kt }
       data/          { MemoryDatabase.kt, PersonProfileEntity.kt, MemorySessionEntity.kt,
                        PersonDao.kt, SessionDao.kt, MemoryRepository.kt, EmbeddingCodec.kt, DemoSeeder.kt }
       enrollment/    { PersonEnrollmentManager.kt }
-    app/src/main/assets/models/   # all model files (§16)
-    app/libs/                     # executorch-android-release.aar
+    app/src/main/jniLibs/arm64-v8a/  # QAIRT 2.45 .so runtime libs (libQnnHtp*, libQnnSystem, libGenie*) + ExecuTorch .so
+    app/libs/                        # executorch-android-release.aar
+    # NOTE: model weights are NOT bundled in assets — pushed to the device (§16, option 2).
 ```
 
 ---
 
 ## 16. File placement
 
-```text
-android/app/src/main/assets/models/
-├── mediapipe_face_detection.pte          ← ExecuTorch, QNN/NPU, float
-├── mediapipe_face_landmark_detector.pte  ← ExecuTorch, QNN/NPU, float
-├── cavaface.pte                          ← ExecuTorch, QNN/NPU, w8a16 (~62MB)
-├── whisper_encoder.bin                   ← QNN context binary, w8a16
-├── whisper_decoder.bin                   ← QNN context binary, w8a16
-├── metadata.json                         ← Whisper tensor specs
-└── llama3_2_1b_instruct.pte             ← ExecuTorch, QNN/NPU, w4a16
+**Model weights are pushed to the device, not bundled (option 2)** — total ~1.8 GB (CavaFace+Whisper
+~0.5 GB, Llama Genie ~1.3 GB) exceeds APK limits and GitHub's 100 MB/file cap. They are `adb push`ed
+to the app's external files dir and loaded by path; `.gitignore` keeps them out of the repo.
 
+```text
+On device → /sdcard/Android/data/com.synapseriders.memory_recall_app/files/models/
+├── mediapipe_face_detection.pte          ← ExecuTorch, float (~2 MB)
+├── mediapipe_face_landmark_detector.pte  ← ExecuTorch, float (~3 MB)
+├── cavaface.bin                          ← QNN context binary, w8a16 (~132 MB)
+├── whisper/
+│   ├── encoder.bin                       ← QNN context binary, w8a16 (~132 MB)
+│   ├── decoder.bin                       ← QNN context binary, w8a16 (~225 MB)
+│   └── metadata.json                     ← Whisper tensor specs
+└── llama_genie/                          ← QAIRT Genie bundle (~1.3 GB)
+    ├── part1_of_3.bin  part2_of_3.bin  part3_of_3.bin
+    ├── genie_config.json  htp_backend_ext_config.json
+    └── tokenizer.json  tokenizer_config.json  special_tokens_map.json  config.json
+
+In repo (committed):
 android/app/libs/
 └── executorch-android-release.aar        ← from github.com/pytorch/executorch/releases
+android/app/src/main/jniLibs/arm64-v8a/   ← QAIRT 2.45 .so libs (NOT committed; per-dev local)
+scripts/push_models.sh                     ← adb push helper (laptop → device)
 ```
 
 ---
@@ -754,9 +798,14 @@ any are missing. The foreground service declares types `camera|microphone|locati
 
 ### 20.4 Kotlin — ai & identity
 - **`ai/OnDeviceModelRunner.kt`** — interface (§8.3).
-- **`ai/ExecuTorchModelRunner.kt`** — detect + landmarks(5pt) + `embedFace`(CavaFace) + Llama
-  `generate`; warm-up off UI; per-stage latency logs; never crash on load failure.
-- **`ai/WhisperQnnRunner.kt`** — QNN context-binary ASR; `SpeechRecognizer` fallback.
+- **`ai/ExecuTorchModelRunner.kt`** — face `detect` + `extractLandmarks`(5pt) via the two `.pte`
+  models; warm-up off UI; per-stage latency logs; never crash on load failure.
+- **`ai/QnnModelRunner.kt`** — raw QNN context-binary runtime: `embedFace`(CavaFace `cavaface.bin`)
+  and `transcribe`(Whisper `encoder.bin`+`decoder.bin`); `SpeechRecognizer` fallback for ASR.
+- **`ai/GenieLlmRunner.kt`** — `generate` via the QAIRT Genie dialog API (Llama 3.2 1B bundle);
+  template fallback on load/timeout failure.
+- **`ai/ModelAssets.kt`** — resolves model paths under the device external files dir; reports which
+  models are present so missing ones degrade gracefully.
 - **`ai/FakeModelRunner.kt`** — deterministic stubs (tests/CI only).
 - **`identity/FaceEmbeddingEngine.kt`** — center-crop selection + alignment + CavaFace + dot-product
   match + enrollment averaging (§4).
@@ -835,16 +884,21 @@ Schema moved to `landmark_vector float32[936]`; `EmbeddingCodec`→`LandmarkCode
 ### CHECKPOINT 2.6 — v2→v4 migration (CavaFace embedding) — ⛔ NEXT
 Apply §21. **DoD:** §21.2.
 
-### CHECKPOINT 3 — ExecuTorch model runner (all four models)
-- ExecuTorch AAR in `android/app/libs/`.
-- `detectFaces()` → `List<FaceBox>` (bbox + confidence) from `mediapipe_face_detection.pte`.
-- `extractLandmarks()` → 5 key points (10 floats) from `mediapipe_face_landmark_detector.pte`.
-- `embedFace()` → CavaFace `float32[512]` (input `float32[1,3,112,112]` in `[-1,1]`, CHW), L2-norm.
-- `generate()` → Llama via the ExecuTorch LLM runner API.
-- All four warm up off UI on service start; latency logged (`face_detection`, `face_alignment`,
-  `face_embedding`, `llm_generation`). Any load failure: log + safe empty value — **never crash**.
-- **DoD:** Logcat shows all four models loaded at startup; camera at a face → bbox + 5 landmarks +
-  512-d embedding within ~150 ms; no crash on model failure.
+### CHECKPOINT 3 — model runners (ExecuTorch + QNN + Genie)
+- ExecuTorch AAR in `android/app/libs/`; QAIRT 2.45 `.so` libs in `jniLibs/arm64-v8a/`.
+- **`ExecuTorchModelRunner`**
+  - `detectFaces()` → `List<FaceBox>` (bbox + confidence) from `mediapipe_face_detection.pte`.
+  - `extractLandmarks()` → 5 key points (10 floats) from `mediapipe_face_landmark_detector.pte`.
+- **`QnnModelRunner`** (raw QNN context binaries)
+  - `embedFace()` → CavaFace `float32[512]` from `cavaface.bin` (logical input `float32[1,3,112,112]`
+    in `[-1,1]`, CHW; quantized at the graph boundary), L2-norm.
+  - `transcribe()` → Whisper `encoder.bin`+`decoder.bin`.
+- **`GenieLlmRunner`**
+  - `generate()` → Llama 3.2 1B via the QAIRT **Genie** dialog API (3-part Genie bundle).
+- All warm up off UI on service start; latency logged (`face_detection`, `face_alignment`,
+  `face_embedding`, `asr`, `llm_generation`). Any load failure: log + safe fallback — **never crash**.
+- **DoD:** Logcat shows each model loaded at startup; camera at a face → bbox + 5 landmarks +
+  512-d embedding within ~150 ms; no crash when any model is missing.
 
 ### CHECKPOINT 4 — FaceEmbeddingEngine + center-crop selection
 - `selectCenterFace()` — min Euclidean distance to frame center; null if > `MAX_CENTER_OFFSET_PX`.
@@ -857,7 +911,7 @@ Apply §21. **DoD:** §21.2.
   `MAX_CENTER_OFFSET_PX` tunable in one place.
 
 ### CHECKPOINT 5 — Whisper ASR runner (QNN)
-- `WhisperQnnRunner` loads `whisper_encoder.bin` + `whisper_decoder.bin` via the QNN context-binary
+- `QnnModelRunner` loads `whisper_encoder.bin` + `whisper_decoder.bin` via the QNN context-binary
   API; PCM16 → log-mel `float32[1,80,3000]`; `transcribe()`; `TranscriptBuffer` rolling 30 s with
   `getTranscriptWindow()`; encoder/decoder latency tracked; `SpeechRecognizer` fallback.
 - **DoD:** Spoken sentence → correct transcript within ~2 s; fallback activates cleanly on binary
