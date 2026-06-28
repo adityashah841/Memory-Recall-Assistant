@@ -931,6 +931,10 @@ Apply §21. **DoD:** §21.2.
   `forceTick()` via Pigeon.
 - **DoD:** After 60 s the DB has multiple rows; Cases A/B/C correct; `forceTick()` works;
   **bystander faces at frame edges do NOT trigger Case A/B** (center constraint confirmed).
+- **Status:** 🟡 `MemoryForegroundService` + `CaptureLoop` + camera/location/audio providers +
+  `SceneChangeDetector` + `CaptureSink` inserts implemented; channel drives the service; recall reads
+  live `CaptureState`. §10 branching + §10.4 skip covered by JVM unit tests. On-device 60-s DoD needs
+  the S25 camera; live A/B also needs QAIRT (CavaFace) + CP8. Deviations in §24.5.
 
 ### CHECKPOINT 7 — Llama LLM runner + recall pipeline (full read path)
 - `generate()` confirmed (from CP3); `RecallEngine.captureRecallContext()` → `RecallContextDto`;
@@ -1078,6 +1082,34 @@ Deviations:
 DoD (enroll → Recall on a centered face → name → answer) needs CP6 (camera) + CP8 (enrollment); today
 it is demoable end-to-end via `seedDemoData` → Recall (demo fallback) → suggestions → answer +
 evidence. Grounded LLM phrasing awaits the Genie libs (template fallback until then).
+
+### 24.5 CP6 deviations & status
+Capture write path implemented: `MemoryForegroundService` (LifecycleService) + `CaptureLoop` +
+`CameraFrameProvider` (CameraX) + `LocationProvider` (fused) + `AudioCaptureProvider` (AudioRecord) +
+`SceneChangeDetector`, with `MemoryRepository` implementing the new `CaptureSink` (§10 A/B/C inserts).
+`MemoryBackendChannel.startCapture/stopCapture/forceTick` now drive the service, and the recall engine
+reads live frame/location from `CaptureState` (so CP7's demo-fallback is now superseded when the
+service runs). Deviations:
+1. **`CaptureState` singleton** decouples the camera owner (service) from the recall consumer
+   (channel) — frame/location are shared via it rather than passed across components.
+2. **`ai/ModelRuntime` singleton** — service + channel share one `CompositeModelRunner` (warmed once),
+   so warm-up effectively moved to the service per §20.2 (the channel no longer warms explicitly;
+   runners also lazy-warm on first use).
+3. **`MatchResult` gained `embedding`** (the L2-normalized query vector) so Case B can persist the new
+   profile (§10.B). Backward-compatible (default empty).
+4. **`CaptureLoop` is generic over the frame type** so its branch/skip logic is unit-tested on the JVM
+   without an Android `Bitmap`; the service instantiates `CaptureLoop<Bitmap>`.
+5. **Permissions requested natively in `MainActivity`** (camera/mic/location/notifications) instead of
+   via a Flutter plugin (§17 says "Flutter requests"); the service re-checks and only starts providers
+   / declares FGS types it holds permission for (Android 14 requirement).
+6. **Camera frame rotation** is not applied (uses `ImageProxy.toBitmap()` sensor orientation) — fine
+   for center-crop selection; refine if alignment needs it.
+
+**Build/DoD status:** §10 case-branching + §10.4 skip conditions covered by **JVM unit tests**
+(`CaptureLoopTest`, `SceneChangeDetectorTest`). The on-device 60-s DoD (all 3 cases; bystander/edge
+faces rejected) needs the **camera on the S25**; note that until the **QAIRT/CavaFace libs** land
+`embedFace` returns empty ⇒ `identify` yields Case C (no A/B), so live A/B verification is gated on the
+QNN libs **and** CP8 enrollment. Case C capture (scene change) works on-device today.
 
 ---
 

@@ -1,14 +1,17 @@
 package com.synapseriders.memory_recall_app.bridge
 
 import android.content.Context
-import com.synapseriders.memory_recall_app.ai.CompositeModelRunner
+import com.synapseriders.memory_recall_app.ai.ModelRuntime
+import com.synapseriders.memory_recall_app.capture.CaptureState
 import com.synapseriders.memory_recall_app.data.MemoryDatabase
 import com.synapseriders.memory_recall_app.data.MemoryRepository
 import com.synapseriders.memory_recall_app.identity.FaceEmbeddingEngine
 import com.synapseriders.memory_recall_app.recall.AnswerGenerator
 import com.synapseriders.memory_recall_app.recall.QuestionSuggestionEngine
 import com.synapseriders.memory_recall_app.recall.RecallEngine
+import com.synapseriders.memory_recall_app.recall.RecallLocation
 import com.synapseriders.memory_recall_app.recall.RetrievalRanker
+import com.synapseriders.memory_recall_app.service.MemoryForegroundService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,19 +33,18 @@ import kotlinx.coroutines.withContext
  */
 class MemoryBackendChannel(context: Context) : MemoryBackendApi {
 
+    private val appContext = context.applicationContext
     private val repository: MemoryRepository
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    // CP3: the production model runner. Warm-up moves to MemoryForegroundService in CP6 (§20.2, §24);
-    // for now it is warmed here off the UI thread so CP3 is independently demoable (DoD: models load
-    // at startup, visible in logcat via ModelAssets.report()).
-    private val modelRunner = CompositeModelRunner(context)
+    // Shared on-device model runner (warmed by the foreground service; lazy-warms on first use too).
+    private val modelRunner = ModelRuntime.get(context)
 
-    // CP7: read-path recall engine. Frame/location providers default to null until CP6 wires the
-    // camera, so captureRecallContext falls back to seeded data (§24.x).
+    // CP7 read-path recall engine. CP6 supplies live frame/location from CaptureState; when the
+    // service isn't running these are null and captureRecallContext falls back to seeded data (§24.4).
     private val recallEngine: RecallEngine
 
-    // In-memory capture flag until the foreground service lands (Milestone 3).
+    // Mirrors the foreground service's running state for getServiceState.
     private var running: Boolean = false
 
     init {
@@ -57,22 +59,27 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
             ranker = RetrievalRanker(sessionDao),
             suggester = QuestionSuggestionEngine(),
             answerer = AnswerGenerator(modelRunner),
+            frameProvider = { CaptureState.latestFrame },
+            locationProvider = {
+                CaptureState.latestLocation?.let { RecallLocation(it.label, it.latitude, it.longitude) }
+            },
         )
-        scope.launch(Dispatchers.Default) { modelRunner.warmUp() }
     }
 
-    // --- Service lifecycle (in-memory stub) ----------------------------------
+    // --- Service lifecycle (CP6: real foreground service) --------------------
 
     override fun startCapture() {
+        MemoryForegroundService.start(appContext)
         running = true
     }
 
     override fun stopCapture() {
+        MemoryForegroundService.stop(appContext)
         running = false
     }
 
     override fun forceTick() {
-        // Stub: a real tick (Milestone 3) would persist a session here.
+        MemoryForegroundService.tick(appContext)
     }
 
     override fun getServiceState(callback: (Result<ServiceStateDto>) -> Unit) = deliver(callback) {

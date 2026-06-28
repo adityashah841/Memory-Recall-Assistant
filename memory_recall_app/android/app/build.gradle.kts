@@ -52,6 +52,11 @@ android {
         }
     }
 
+    // JVM unit tests: return defaults for unmocked Android stubs (e.g. android.util.Log).
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     // Only wire the C++ build when the QNN SDK is available (keeps a vanilla build green).
     if (qnnSdkRoot != null) {
         externalNativeBuild {
@@ -94,6 +99,14 @@ dependencies {
     implementation("org.pytorch:executorch-android:1.3.1")
     // Optional override: drop a specific executorch AAR into app/libs/ to pin a matching runtime.
     implementation(fileTree("libs") { include("*.aar") })
+
+    // CP6 (§9, §20.3): CameraX capture, fused location, lifecycle-aware foreground service.
+    val cameraxVersion = "1.4.2"
+    implementation("androidx.camera:camera-core:$cameraxVersion")
+    implementation("androidx.camera:camera-camera2:$cameraxVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("androidx.lifecycle:lifecycle-service:2.8.7")
 
     // CP4: JVM unit tests for the identity geometry/matching logic (src/test).
     testImplementation("junit:junit:4.13.2")

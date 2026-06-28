@@ -64,6 +64,7 @@ class FaceEmbeddingEngine(private val runner: OnDeviceModelRunner) {
                 similarityScore = max(0f, bestScore),
                 isKnown = known,
                 faceBox = target,
+                embedding = query,
             )
         }
     }
@@ -159,4 +160,6 @@ data class MatchResult(
     val similarityScore: Float,
     val isKnown: Boolean,
     val faceBox: FaceBox,
+    /** The L2-normalized query embedding — persisted as the new profile for an unknown face (§10.B). */
+    val embedding: FloatArray = FloatArray(0),
 )
