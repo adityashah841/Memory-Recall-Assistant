@@ -1138,6 +1138,19 @@ the **S25 camera + QAIRT/CavaFace libs** — without CavaFace, `embedFace` is em
 "couldn't capture" and later recognition can't discriminate faces. Logic compiles + degrades
 gracefully.
 
+### 24.7 On-device finding — ExecuTorch MediaPipe `.pte` aborts on guessed input (CP6 follow-up)
+First on-device run (S25) surfaced a **native `SIGABRT` in `libexecutorch.so`** during `Module.forward`,
+from `ExecuTorchModelRunner.detectFaces` on every capture tick (abort message `'ptr'`). The MediaPipe
+detection/landmark `.pte` reject the **guessed** input tensor (`float32[1,3,256,256]`, `[-1,1]`; see the
+unverified `DetectCfg`/`LandmarkCfg`, §24.1). A native abort **cannot be caught** by Kotlin try/catch,
+so it killed the process → the foreground service restarted (START_STICKY) → crash loop (cycling PIDs).
+**Fix:** gated ExecuTorch inference behind `ExecuTorchModelRunner.INFERENCE_ENABLED = false`
+(`detectFaces`/`extractLandmarks` return empty without calling `forward`). The models still **load**
+(proven on-device), and capture now runs stably → Case C rows accumulate; recall (seeded) + enrollment
+(graceful) work. **To re-enable:** confirm the real input shape/dtype/normalization + output decode for
+the delivered MediaPipe exports (from the model authors or by introspecting the `.pte`), set the decode
+constants, then flip the flag. Identity (Case A/B) remains additionally gated on the QAIRT/CavaFace libs.
+
 ---
 
 ## 25. Version decision summary

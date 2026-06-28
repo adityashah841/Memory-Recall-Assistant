@@ -45,6 +45,7 @@ class ExecuTorchModelRunner(private val assets: ModelAssets) {
 
     /** Detect faces in [frame]; bbox/confidence in source-frame pixels. Empty when unavailable. */
     fun detectFaces(frame: Bitmap): List<FaceBox> {
+        if (!INFERENCE_ENABLED) return emptyList()
         val model = detector ?: run { warmUp(); detector } ?: return emptyList()
         return StageLatency.measure(StageLatency.FACE_DETECTION) {
             try {
@@ -62,6 +63,7 @@ class ExecuTorchModelRunner(private val assets: ModelAssets) {
 
     /** 5 alignment key points (10 floats `[x0,y0,…]`) in [faceCrop] pixel coords. Empty on failure. */
     fun extractLandmarks(faceCrop: Bitmap): FloatArray {
+        if (!INFERENCE_ENABLED) return FloatArray(0)
         val model = landmarker ?: run { warmUp(); landmarker } ?: return FloatArray(0)
         return StageLatency.measure(StageLatency.FACE_ALIGNMENT) {
             try {
@@ -186,7 +188,16 @@ class ExecuTorchModelRunner(private val assets: ModelAssets) {
         val MESH_INDICES = intArrayOf(33, 263, 1, 61, 291)
     }
 
-    private companion object {
-        const val TAG = "ExecuTorchRunner"
+    companion object {
+        private const val TAG = "ExecuTorchRunner"
+
+        /**
+         * Gate for running the MediaPipe `.pte` graphs. **Off** because the exact input spec of these
+         * exports is unverified (§24.1): feeding a guessed `float32[1,3,256,256]` aborts natively inside
+         * libexecutorch ("ptr"), which a native crash can't be caught — it killed the capture process.
+         * Flip to `true` only once the real input shape/dtype/normalization + output layout
+         * (`DetectCfg`/`LandmarkCfg`) are confirmed against the delivered models. See §24.7.
+         */
+        const val INFERENCE_ENABLED = false
     }
 }
