@@ -6,6 +6,11 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// CP3 (§22): the QNN/Genie native bridge only builds when the QAIRT 2.45 SDK path is supplied,
+// via `qnnSdkRoot` in local.properties or the QNN_SDK_ROOT env var. Without it the app still builds
+// and runs (CavaFace/Whisper/LLM fall back) — see ai/NativeInference.kt.
+val qnnSdkRoot: String? = (project.findProperty("qnnSdkRoot") as String?) ?: System.getenv("QNN_SDK_ROOT")
+
 android {
     namespace = "com.synapseriders.memory_recall_app"
     compileSdk = flutter.compileSdkVersion
@@ -26,6 +31,35 @@ android {
         targetSdk = maxOf(34, flutter.targetSdkVersion)
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // §2: Snapdragon 8 Elite NPU is arm64-only; QNN/Genie + ExecuTorch ship arm64-v8a .so only.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+        if (qnnSdkRoot != null) {
+            externalNativeBuild {
+                cmake {
+                    arguments += "-DQNN_SDK_ROOT=$qnnSdkRoot"
+                }
+            }
+        }
+    }
+
+    // The QAIRT .so runtime libs in jniLibs must ship uncompressed so the native loader can mmap them.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
+    // Only wire the C++ build when the QNN SDK is available (keeps a vanilla build green).
+    if (qnnSdkRoot != null) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
+        }
     }
 
     buildTypes {
@@ -53,4 +87,9 @@ dependencies {
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+
+    // CP3 (§2, §16): ExecuTorch runtime for the face detection/landmark .pte models. Drop
+    // `executorch-android-release.aar` into app/libs/ (github.com/pytorch/executorch/releases).
+    // Loaded reflectively (ai/ExecuTorchBackend.kt) so the project compiles even when libs/ is empty.
+    implementation(fileTree("libs") { include("*.aar") })
 }

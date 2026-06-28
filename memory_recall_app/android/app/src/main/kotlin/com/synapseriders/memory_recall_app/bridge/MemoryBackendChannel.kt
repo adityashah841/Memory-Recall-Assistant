@@ -1,6 +1,7 @@
 package com.synapseriders.memory_recall_app.bridge
 
 import android.content.Context
+import com.synapseriders.memory_recall_app.ai.CompositeModelRunner
 import com.synapseriders.memory_recall_app.data.MemoryDatabase
 import com.synapseriders.memory_recall_app.data.MemoryRepository
 import kotlinx.coroutines.CoroutineScope
@@ -26,12 +27,18 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
     private val repository: MemoryRepository
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    // CP3: the production model runner. Warm-up moves to MemoryForegroundService in CP6 (§20.2, §24);
+    // for now it is warmed here off the UI thread so CP3 is independently demoable (DoD: models load
+    // at startup, visible in logcat via ModelAssets.report()).
+    private val modelRunner = CompositeModelRunner(context)
+
     // In-memory capture flag until the foreground service lands (Milestone 3).
     private var running: Boolean = false
 
     init {
         val db = MemoryDatabase.getInstance(context)
         repository = MemoryRepository(db.personDao(), db.sessionDao())
+        scope.launch(Dispatchers.Default) { modelRunner.warmUp() }
     }
 
     // --- Service lifecycle (in-memory stub) ----------------------------------

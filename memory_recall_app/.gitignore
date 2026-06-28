@@ -43,3 +43,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# On-device model weights — pushed via scripts/push_models.sh, never committed (§16, option 2)
+*.pte
+*.bin
+models_local/
+/android/app/src/main/assets/models/
+
+# Per-dev native artifacts: QAIRT 2.45 runtime .so libs + ExecuTorch AAR (not committed; §16)
+/android/app/src/main/jniLibs/
+/android/app/libs/*.aar

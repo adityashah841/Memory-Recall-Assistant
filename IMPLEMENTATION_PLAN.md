@@ -899,6 +899,8 @@ Apply §21. **DoD:** §21.2.
   `face_embedding`, `asr`, `llm_generation`). Any load failure: log + safe fallback — **never crash**.
 - **DoD:** Logcat shows each model loaded at startup; camera at a face → bbox + 5 landmarks +
   512-d embedding within ~150 ms; no crash when any model is missing.
+- **Status:** 🟡 code implemented (`ai/` runners + native bridge skeleton + Gradle/NDK wiring);
+  on-device DoD pending (AAR + QAIRT libs + pushed models + S25). Deviations in §24.1.
 
 ### CHECKPOINT 4 — FaceEmbeddingEngine + center-crop selection
 - `selectCenterFace()` — min Euclidean distance to frame center; null if > `MAX_CENTER_OFFSET_PX`.
@@ -975,6 +977,30 @@ Grant on first launch: Camera, Microphone, Location, Notifications.
 | Llama latency | — | If >8 s, reduce `max_tokens` or use template-only mode. |
 | CavaFace warm-up | — | ~62 MB takes a few seconds cold — load at service start, keep warm. |
 | Meta Glasses relay | — | Bluetooth frame-relay architecture TBD when the device is confirmed. |
+
+### 24.1 CP3 deviations & status (contract §"if you deviate, note it here")
+Implemented the three runner backends + interface + composite. Deviations from the literal plan:
+1. **Reflective ExecuTorch** (`ai/ExecuTorchBackend.kt`) instead of a direct AAR `import`, so the
+   whole `ai/` module **compiles with zero external artifacts** and degrades gracefully when
+   `app/libs/*.aar` is absent. Switch to direct imports later if preferred — no behavior change.
+2. **`CompositeModelRunner` added** (not named in §8.2) — `FaceEmbeddingEngine(runner:
+   OnDeviceModelRunner)` (§4) needs one object exposing all six methods; the composite fans out to the
+   three backends. The backend runners deliberately do **not** implement `OnDeviceModelRunner`.
+3. **Native QNN/Genie bridge is a skeleton** (`cpp/synapse_inference.cpp`): lifecycle wired against
+   the real API; graph I/O binding (tensor names/quant params) + Whisper decode are `TODO`/CP5.
+4. **Detection/landmark decode constants are unverified** (`ExecuTorchModelRunner.DetectCfg`/
+   `LandmarkCfg`: input size, anchors, FaceMesh indices) — confirm against the real `.pte` I/O
+   on-device, same open item as the CavaFace I/O caveat (§2.1). Safe-empty fallback until then.
+5. **Warm-up temporarily in `MemoryBackendChannel`** (off the UI thread) so CP3 is demoable before the
+   service exists; **moves to `MemoryForegroundService` in CP6** (§20.2).
+6. **Native build is Gradle-guarded** behind `qnnSdkRoot`/`QNN_SDK_ROOT`; `jniLibs/*.so` + the AAR are
+   per-dev and gitignored (§16). `scripts/push_models.sh` deploys weights to the device.
+
+**Build/DoD status:** code is written to compile cleanly and never crash on missing models, but the
+**build + on-device DoD were NOT verified here** — this environment has no JDK/Android SDK/`adb`/device
+and none of the AAR/QAIRT libs/model weights. Verify on the S25: drop the AAR in `app/libs/`, set
+`qnnSdkRoot`, copy QAIRT `.so` libs to `jniLibs/arm64-v8a/`, run `scripts/push_models.sh`, then
+`flutter run` and watch logcat (`ModelAssets`, `MemoryLatency`) for load + per-stage timings.
 
 ---
 
