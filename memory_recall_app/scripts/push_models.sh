@@ -20,18 +20,24 @@ SRC="${1:-$HOME/Downloads}"
 PKG="com.synapseriders.memory_recall_app"
 DEST="/sdcard/Android/data/${PKG}/files/models"
 
-command -v adb >/dev/null || { echo "ERROR: adb not found (install platform-tools)"; exit 1; }
-adb get-state >/dev/null 2>&1 || { echo "ERROR: no device. Connect the S25 with USB debugging on."; exit 1; }
+# Resolve adb from PATH or the standard SDK locations.
+ADB="$(command -v adb || true)"
+for cand in "$ANDROID_HOME/platform-tools/adb" "$ANDROID_SDK_ROOT/platform-tools/adb" \
+            "$HOME/Library/Android/sdk/platform-tools/adb"; do
+  [ -z "$ADB" ] && [ -x "$cand" ] && ADB="$cand"
+done
+[ -n "$ADB" ] || { echo "ERROR: adb not found (install platform-tools or set ANDROID_HOME)"; exit 1; }
+"$ADB" get-state >/dev/null 2>&1 || { echo "ERROR: no device. Connect the S25 with USB debugging on."; exit 1; }
 
 echo "Source : $SRC"
-echo "Device : $(adb get-serialno)"
+echo "Device : $("$ADB" get-serialno)"
 echo "Dest   : $DEST"
-adb shell mkdir -p "$DEST/whisper" "$DEST/llama_genie"
+"$ADB" shell mkdir -p "$DEST/whisper" "$DEST/llama_genie"
 
 push() {  # push <local> <remote-name>
   if [[ -f "$1" ]]; then
     echo "  → $2"
-    adb push "$1" "$DEST/$2" >/dev/null
+    "$ADB" push "$1" "$DEST/$2" >/dev/null
   else
     echo "  ! missing: $1 (skipped)"
   fi
@@ -67,4 +73,4 @@ else
 fi
 
 echo "Done. On-device tree:"
-adb shell ls -R "$DEST"
+"$ADB" shell ls -R "$DEST"
