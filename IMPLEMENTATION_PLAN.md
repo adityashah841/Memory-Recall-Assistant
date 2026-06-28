@@ -1,386 +1,467 @@
-# Memory Recall Assistant — Implementation Plan
+# Memory Recall Assistant — Implementation Plan (v2.0, Landmark Identity)
 
-> **Status:** Authoritative build specification for sub-agents.
-> **Source of truth:** This document. If code and this document disagree, fix the code or raise an
-> open question (Section 17) — do not silently diverge.
-> **Golden rule:** Schemas (Section 5), insertion/querying flows (Sections 8–9), the recall pipeline
-> (Section 10), and the Flutter↔Kotlin API (Section 11) must stay mutually consistent. A change to
-> one requires a matching change to the others.
-
----
-
-## 1. Overview, goals, and hackathon principles
-
-### 1.1 What we are building
-A multimodal, on-device **memory recall assistant**. The phone continuously and *periodically*
-observes the world through the camera (and a short rolling audio window), and quietly writes
-**compact memory records** to a local knowledge graph. Later, the user presses a **Recall** button;
-the app figures out *who/where* it is looking at, retrieves the relevant memories, **suggests the
-questions the user is likely to ask**, and **answers them with cited evidence** (time, place,
-thumbnail, transcript snippet).
-
-Motivating example: you meet someone you have met before. You press Recall. The app says "This is
-**Priya**, you last spoke at the **office cafe** about her **Kyoto trip**", suggests
-"What did Priya say about Kyoto?", and answers from stored transcripts.
-
-### 1.2 Goals
-- **G1 — Continuous compact capture.** Background loop produces small memory records on meaningful
-  events. Never an always-on full A/V recorder.
-- **G2 — Local knowledge graph.** Two-table store (people + sessions) on-device via Room/SQLite.
-- **G3 — On-device AI.** Face, image, text embeddings, ASR, and a small LLM all run locally via
-  ExecuTorch (hard requirement — see Section 6). No cloud inference.
-- **G4 — Button-triggered recall.** Identify subject → retrieve → rank → suggest questions →
-  answer with evidence.
-- **G5 — Clean Flutter/Kotlin split.** Flutter owns UX; Kotlin owns Android-native reliability.
-
-### 1.3 Hackathon principles (non-negotiable)
-- **Flutter owns UX; Kotlin owns Android-native reliability.** Do not push capture/storage/inference
-  into Dart; do not push navigation/screens into Kotlin.
-- **Store events, not streams.** Persist event summaries, thumbnails, metadata, and embeddings only
-  when something meaningful happens.
-- **Template-first intelligence.** Question suggestions and answers start from deterministic
-  templates over retrieved rows; the LLM only *rewrites/polishes* and *synthesizes* — retrieval and
-  evidence are always grounded in stored rows.
-- **Degrade gracefully.** Missing audio, missing location, no face, or a cold model must never crash
-  the capture loop or the recall flow.
+> **Status:** Authoritative build specification for all sub-agents and teammates.
+> **Device:** Samsung Galaxy S25 Ultra (Snapdragon 8 Elite for Galaxy, 12 GB RAM).
+> **Framework:** Flutter (UX) + Kotlin (Android native), bridged by **Pigeon**.
+> **Golden rule:** Schemas (§5), insertion/querying flows (§9–§10), the recall pipeline (§11), and
+> the Flutter↔Kotlin API (§13) must stay mutually consistent. A change to one requires a matching
+> change to the others. If code and this document disagree, fix the code — do not silently diverge.
+> **Privacy invariant (hard):** **No face images and no face embeddings are ever stored, anywhere,
+> at any point.** Identity is geometric landmark math only.
 
 ---
 
-## 2. Target device & constraints
+## 0. Current status & incremental path
 
-- **Primary device:** Samsung **Galaxy S25 Ultra** (Snapdragon 8 Elite class SoC, NPU/GPU available,
-  ≥12 GB RAM). All model sizes below are chosen to run comfortably here.
-- **OS target:** Android 14+ (`minSdk 31`, `targetSdk 34`+). Foreground-service + runtime-permission
-  model assumed.
-- **Offline-first:** All inference is local. Network is optional and must not be on the capture or
-  recall critical path.
-- **Thermals/battery:** The capture loop is *periodic / event-gated*, not free-running per frame, to
-  bound heat and battery (see Section 4.1 cadence).
-- **Storage:** Frames stored as compressed JPEG thumbnails; audio stored as short compressed clips;
-  embeddings stored as `float32` blobs. Old rows are prunable (Section 14.4).
+This project is **already underway**. Two checkpoints are complete, but they were built against the
+**original v1 schema** (face/scene/voice *embeddings*). v2.0 replaces that identity approach with
+**privacy-first landmark geometry** and removes all embeddings. The immediate next task is therefore
+a **data-layer migration** (Checkpoint 2.5) before any new feature work.
+
+| Checkpoint | State | Notes |
+| --- | --- | --- |
+| **CP1 — Skeleton & Pigeon bridge** | ✅ Done | Flutter shell (4 screens), Pigeon API, `MemoryBackendChannel` with canned data, `MainActivity` host registration. |
+| **CP2 — Data layer** | ⚠️ Done on **old schema** | Room DB, entities, DAOs, `MemoryRepository`, `DemoSeeder`, `DtoMappers` exist — but with `face_embedding` / `frame_embedding` / `voice_embedding` / `reference_face_image` / `voice_id` and an `EmbeddingCodec`. **Must be migrated.** |
+| **CP2.5 — Schema migration to landmark identity** | ⛔ **Next** | Refactor the existing data layer to the v2 schema (§5) and Pigeon DTOs (§13). See §19 for the exact file-by-file change list. |
+| **CP3 → CP10** | ⛔ Not started | Proceed in order per §20 once CP2.5 is green. |
+
+**Do CP2.5 first.** Everything downstream (identity, capture, recall) assumes the v2 schema.
 
 ---
 
-## 3. High-level architecture
+## 1. Model stack (final, locked)
 
+All model files live under `android/app/src/main/assets/models/`.
+
+| Purpose | File | Format | Runtime / Quantization |
+| --- | --- | --- | --- |
+| Face detection | `mediapipe_face_detection.pte` | ExecuTorch | QNN/NPU — float |
+| Face landmark extraction | `mediapipe_face_landmark_detector.pte` | ExecuTorch | QNN/NPU — float |
+| ASR encoder | `whisper_encoder.bin` | **QNN context binary** | QNN/NPU — **w8a16** |
+| ASR decoder | `whisper_decoder.bin` | **QNN context binary** | QNN/NPU — **w8a16** |
+| LLM (cue + answer generation) | `llama3_2_1b_instruct.pte` | ExecuTorch | QNN/NPU — **w4a16** |
+| ASR metadata / tensor specs | `metadata.json` | JSON | Reference only |
+
+> **No MobileFaceNet. No MobileCLIP. No face embeddings stored anywhere. No face images stored
+> anywhere.** Whisper is the **only** model that is **not** ExecuTorch — it loads via the QNN SDK
+> context-binary API.
+
+---
+
+## 2. Identity architecture (privacy-first, landmark-based)
+
+### 2.1 What changed from the original (v1) plan
+- ❌ REMOVED: MobileFaceNet face embeddings.
+- ❌ REMOVED: MobileCLIP image/text embeddings (`frame_embedding`, `voice_embedding`).
+- ❌ REMOVED: `reference_face_image` column and any face-image storage at any point.
+- ❌ REMOVED: `voice_id` column and vector similarity search.
+- ✅ ADDED: Normalized **landmark geometry** replaces face embeddings.
+- ✅ ADDED: Dot-product matching on `float32[936]` landmark vectors.
+
+### 2.2 Identity pipeline
 ```text
-+--------------------------------------------------------------+
-|                         FLUTTER (Dart)                       |
-|  UI / UX only                                                |
-|  - RecallScreen      (press-to-recall, suggestions, answers) |
-|  - TimelineScreen    (browse stored sessions)                |
-|  - EnrollmentScreen  (name/label unknown people)             |
-|  - DebugScreen       (force tick, seed demo, inspect DB)     |
-|  Controllers call -> MemoryBackendApi (Pigeon)               |
-+----------------------------+---------------------------------+
-                             |  Pigeon typed platform channel
-                             v
-+--------------------------------------------------------------+
-|                        KOTLIN (Android)                      |
-|  Native reliability                                          |
-|                                                              |
-|  bridge/        MemoryBackendChannel  (Pigeon host impl)     |
-|                 DtoMappers                                   |
-|                                                              |
-|  service/       MemoryForegroundService  (lifecycle)         |
-|                 CaptureLoop              (periodic tick)     |
-|                                                              |
-|  capture/       CameraFrameProvider (CameraX)                |
-|                 TranscriptBuffer    (rolling ~60s ASR)       |
-|                 LocationProvider    (fused + room label)     |
-|                 DemoContextProvider (scripted demo input)    |
-|                                                              |
-|  recall/        RecallEngine                                 |
-|                 RetrievalRanker                              |
-|                 QuestionSuggestionEngine                     |
-|                 AnswerGenerator                              |
-|                                                              |
-|  ai/            OnDeviceModelRunner (iface)                  |
-|                 ExecuTorchModelRunner (committed impl)       |
-|                 FakeModelRunner       (tests/CI only)        |
-|                                                              |
-|  enrollment/    PersonEnrollmentManager                      |
-|                                                              |
-|  data/          MemoryDatabase (Room)                        |
-|                 PersonProfileEntity / MemorySessionEntity    |
-|                 PersonDao / SessionDao                       |
-|                 MemoryRepository (single entry point)        |
-|                 DemoSeeder                                   |
-+--------------------------------------------------------------+
+Camera frame
+      ↓
+[mediapipe_face_detection.pte]            →  bounding box
+      ↓
+Crop face region (reject if < MIN_FACE_SIZE_PX)
+      ↓
+[mediapipe_face_landmark_detector.pte]    →  468 (x,y) landmark points (float32[936] raw)
+      ↓
+LandmarkIdentityEngine.normalize():
+   1. Compute centroid (mean x, mean y)
+   2. Subtract centroid from all 468 points          (translation invariance)
+   3. Compute inter-ocular distance (eye-center to eye-center)
+   4. Divide all points by inter-ocular distance      (scale invariance)
+   5. Rotate so the eye line is horizontal             (rotation invariance)
+   6. Flatten to float32[936]
+   7. L2-normalize                                     (so dot product = cosine)
+      ↓
+Dot product vs every stored landmark_vector in person_profile_table
+      ↓
+Score >= TAU_KNOWN (0.92)  →  Known person   (Case A)
+Score <  TAU_KNOWN         →  Unknown person (Case B)
+No face detected           →  No person      (Case C)
 ```
 
-**Data direction:**
-- **Capture (write path):** `CaptureLoop` → `capture/*` providers → `ai/*` embeddings →
-  decision (Section 8) → `MemoryRepository` → Room.
-- **Recall (read path):** Flutter `RecallScreen` → Pigeon → `RecallEngine` →
-  `MemoryRepository` (retrieval) → `RetrievalRanker` → `QuestionSuggestionEngine` →
-  `AnswerGenerator` → Pigeon → Flutter.
+### 2.3 Enrollment
+- Capture **5 frames** of the same person.
+- Extract + normalize a landmark vector from each frame.
+- Average the 5 vectors, then **L2-normalize the average**.
+- Store in `person_profile_table.landmark_vector`.
+- **No face image is ever saved at any point.**
+
+### 2.4 Identity matching constants (single source of truth)
+```kotlin
+const val TAU_KNOWN = 0.92f          // known/unknown threshold; tune after on-device testing
+const val MIN_FACE_SIZE_PX = 80      // ignore small/distant faces
+const val ENROLLMENT_SAMPLES = 5     // frames averaged per enrollment
+const val VICINITY_RADIUS_M = 75.0   // location vicinity for retrieval
+```
+These live in **one** centralized Kotlin object (e.g. `identity/IdentityConfig.kt`); never duplicate
+the numbers.
 
 ---
 
-## 4. Core working (strict reproduction of requirements)
+## 3. Data schema
 
-This section reproduces the required behavior verbatim in intent. **Do not deviate.**
+> Storage engine: **Room over SQLite**. The only stored vector is `landmark_vector`
+> (`float32[936]`, L2-normalized at write time so similarity = dot product). Retrieval is **SQL-based**
+> (`person_id` + location + recency) — **no ANN index, no vector search** at hackathon scale.
 
-### 4.1 Camera is always live, captured periodically
-- The camera is **always live** while the `MemoryForegroundService` runs, capturing in a **periodic**
-  fashion via `CaptureLoop`.
-- A **tick** fires on a cadence (default **every ~5 s**, configurable) and/or on an event trigger
-  (face detected / significant scene change). Each tick may *skip* persistence if nothing meaningful
-  is present (still avoid always-on recording).
+### 3.1 `person_profile_table` (entity: `PersonProfileEntity`)
+| Column | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| `person_id` | INTEGER PK autoincrement | No | Auto-assigned as new people are encountered. |
+| `name` | TEXT | Yes | Filled at enrollment. |
+| `landmark_vector` | BLOB `float32[936]` | No | L2-normalized geometric identity — **NOT a face embedding**. |
+| `context_notes` | TEXT | Yes | LLM-inferred or user-provided. |
+| `created_at` | INTEGER epoch ms | No | |
+| `updated_at` | INTEGER epoch ms | No | |
 
-### 4.2 Knowledge graph — what is available at a tick / how we query it
-At each tick the system has:
-- **One or more frames** available from the camera.
-- A frame **may or may not contain a person**. If a person is identified → mark with `person_id`;
-  otherwise → mark as **unknown**.
-- **Conversation history / voice recording of the last ~1 minute** (rolling `TranscriptBuffer`).
-- **Location** (fused location + manual room/location label).
+### 3.2 `session_table` (entity: `MemorySessionEntity`)
+| Column | Type | Nullable | Notes |
+| --- | --- | --- | --- |
+| `session_id` | INTEGER PK autoincrement | No | |
+| `person_id` | INTEGER FK → `person_profile_table` | **Yes** | `NULL` when no person in frame (Case C). `ON DELETE SET NULL`. |
+| `location_label` | TEXT | Yes | Room or place label. |
+| `latitude` | REAL | Yes | Fused location. |
+| `longitude` | REAL | Yes | Fused location. |
+| `timestamp` | INTEGER epoch ms | No | Event time. |
+| `frame_image` | TEXT path | No | Compressed JPEG **scene** thumbnail (not a stored face crop). |
+| `voice_clip` | TEXT path | Yes | Audio clip for the window. |
+| `transcript` | TEXT | Yes | Whisper ASR output. |
+| `created_at` | INTEGER epoch ms | No | |
 
-### 4.3 Knowledge graph — data structure (table-based storage, 2 tables)
-See Section 5 for the exact schema. Two tables only:
-1. **`person_profile_table`** — canonical people we have encountered (the face-identity index).
-2. **`session_table`** — time-stamped events: who (nullable) + where + frame + voice + embeddings.
+> **No `frame_embedding` or `voice_embedding` columns.** Retrieval is SQL (`person_id` + location +
+> recency), not vector-based. This simplifies the pipeline significantly.
 
-### 4.4 Identifying a person
-Check whether the **person's face in the current frame matches a person in
-`person_profile_table`** (face-embedding cosine similarity ≥ threshold). See Section 7 for the exact
-algorithm.
-
-### 4.5 The three cases (insertion + querying)
-Reproduced exactly in Sections 8 (insertion) and 9 (querying):
-- **Known person** (matched in `person_profile_table`).
-- **Unknown / new person** (a person is present and is the subject, but does not match any profile).
-- **No person** in the frame.
+### 3.3 Indices
+```sql
+CREATE INDEX idx_session_person_id ON session_table(person_id);
+CREATE INDEX idx_session_timestamp ON session_table(timestamp);
+CREATE INDEX idx_session_location  ON session_table(latitude, longitude);
+```
 
 ---
 
-## 5. Data model (exact schema)
+## 4. ASR pipeline (Whisper via QNN)
 
-> Storage engine: **Room over SQLite** (Kotlin). Embeddings are stored as `float32` little-endian
-> blobs. Vectors are **L2-normalized at write time** so similarity = dot product. Vector search for
-> the MVP is a **linear scan over a candidate set already narrowed by `person_id` + location**
-> (Section 10.2) — no ANN index required at hackathon scale.
+> **Critical:** Whisper uses the **QNN context-binary** format (`.bin`), **NOT** ExecuTorch. Load via
+> the QNN SDK context-binary API. All other models use ExecuTorch `Module.load()`.
 
-### 5.1 `person_profile_table` (entity: `PersonProfileEntity`)
-The canonical record per distinct person. **Identity index.**
+```text
+Microphone audio (16 kHz, mono, PCM16)
+      ↓
+Rolling 30-second window buffer (TranscriptBuffer)
+      ↓
+Log-mel spectrogram: float32[1, 80, 3000]
+      ↓
+[whisper_encoder.bin] via QNN SDK  →  audio features
+      ↓
+[whisper_decoder.bin] via QNN SDK  →  token ids (max 200)
+      ↓
+Tokenizer decode  →  transcript text
+      ↓
+Store in session_table.transcript
+```
 
-| Column | Type | Null? | Notes |
-| --- | --- | --- | --- |
-| `person_id` | INTEGER PK (autoincrement) | no | Assigned as new people are encountered. |
-| `name` | TEXT | yes | Filled when known / during enrollment. |
-| `reference_face_image` | TEXT (path) | yes | Path to the canonical cropped face thumbnail. |
-| `face_embedding` | BLOB (`float32[512]`, ArcFace space) | no | **Identification only.** L2-normalized. |
-| `context_notes` | TEXT | yes | Any context inferred at the time the person was added. |
-| `voice_id` | TEXT | yes | Optional speaker id/voiceprint reference. |
-| `created_at` | INTEGER (epoch ms) | no | |
-| `updated_at` | INTEGER (epoch ms) | no | |
-
-### 5.2 `session_table` (entity: `MemorySessionEntity`)
-One row per persisted event (tick that produced a meaningful record).
-
-| Column | Type | Null? | Notes |
-| --- | --- | --- | --- |
-| `session_id` | INTEGER PK (autoincrement) | no | |
-| `person_id` | INTEGER FK → `person_profile_table.person_id` | **yes** | `NULL` when no person in frame. |
-| `location_label` | TEXT | yes | Manual/known room or place label (e.g. "office cafe"). |
-| `latitude` | REAL | yes | Fused location. |
-| `longitude` | REAL | yes | Fused location. |
-| `timestamp` | INTEGER (epoch ms) | no | Event time (`curr_timestamp`). |
-| `frame_image` | TEXT (path) | no | Frame/thumbnail @ `timestamp`. |
-| `voice_clip` | TEXT (path) | yes | Audio clip for window `[prev_timestamp, curr_timestamp]`. |
-| `transcript` | TEXT | yes | ASR transcript for that same window. |
-| `frame_embedding` | BLOB (`float32[~512]`, CLIP image space) | no | L2-normalized. |
-| `voice_embedding` | BLOB (`float32[~512]`, CLIP text space) | yes | From `transcript`; same shared space. |
-| `created_at` | INTEGER (epoch ms) | no | |
-
-**Embedding decision (locked):** embeddings are **separate** — `frame_embedding` (image) and
-`voice_embedding` (transcript text) are stored as **two distinct vectors** on the session row, while
-`person_profile.face_embedding` is a **third, independent** vector used only for identity. Because
-`frame_embedding` and `voice_embedding` both live in the **shared MobileCLIP space**, a single text
-query embedding can be compared against **both** during vector search (Section 10).
-
-### 5.3 Indices & relations
-- Index `session_table(person_id)`; index `session_table(timestamp)`;
-  index `session_table(latitude, longitude)` (or a coarse geohash column if added later).
-- `person_id` is a nullable foreign key with `ON DELETE SET NULL`.
+**Input specs (from `metadata.json`):**
+- Encoder input: `float32[1, 80, 3000]` — 30 seconds of audio.
+- Decoder input: `int32` token sequence, max 200 tokens.
+- Quantization: **w8a16** (8-bit weights, 16-bit activations).
+- **Fallback:** Android `SpeechRecognizer` if the QNN binary fails to load — **never crash**.
 
 ---
 
-## 6. On-device AI model stack (committed, ExecuTorch-first)
+## 5. LLM pipeline (Llama 3.2 1B via ExecuTorch)
 
-**Hard requirement:** real on-device models from the start. `ExecuTorchModelRunner` is the committed
-implementation behind `OnDeviceModelRunner`. `FakeModelRunner` exists **only** for unit tests/CI and
-must never be wired into the demo build.
+Used for two purposes: (1) generating warm natural recall cues, (2) synthesizing answers from
+retrieved transcripts.
 
-| Purpose | Committed model | Output | Runtime |
-| --- | --- | --- | --- |
-| Face **detection** | MediaPipe BlazeFace **or** ML Kit Face Detection | bbox + landmarks | on-device (non-ExecuTorch OK) |
-| Face **embedding** (identity) | **MobileFaceNet** (ArcFace-trained) | `float32[512]`, L2-norm | **ExecuTorch** |
-| **Frame/scene embedding** | **MobileCLIP-S2** image encoder | `float32[~512]`, CLIP space | **ExecuTorch** |
-| **Voice/transcript embedding** | **MobileCLIP-S2** text encoder | `float32[~512]`, **same** CLIP space | **ExecuTorch** |
-| **ASR** (voice → text) | **Whisper-base** (tiny fallback) | transcript text | **ExecuTorch** (fallback: Android `SpeechRecognizer`) |
-| **LLM** (suggest rewrite + answer) | **Llama 3.2 1B Instruct** (3B optional), 4-bit quant | text | **ExecuTorch** |
+### 5.1 Recall-cue prompt template
+```text
+<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+You are a private memory assistant. Generate one short warm
+sentence to help the user remember the person in front of them.
+Never mention memory loss. Maximum 2 sentences.
+<|eot_id|><|start_header_id|>user<|end_header_id|>
+Person: {name}
+Last seen: {last_seen_timestamp}
+Location: {location_label}
+Recent conversation: {transcript_snippet}
+Generate the recall cue:
+<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+```
 
-Notes for implementers:
-- **Detection vs. embedding are separate stages.** Detection (BlazeFace/ML Kit) yields a face crop;
-  the crop is fed to the ExecuTorch **MobileFaceNet** embedder. Only the *embedding/inference* models
-  are hard-required on ExecuTorch; detection may use MediaPipe/ML Kit for speed/reliability.
-- **Shared CLIP space:** MobileCLIP-S2 image and text encoders output into the **same** vector space,
-  enabling cross-modal retrieval (text query vs. stored image/text vectors). Keep image and text
-  encoders from the **same** MobileCLIP variant.
-- **ASR → text → embedding:** the "voice embedding" is the MobileCLIP **text** embedding of the ASR
-  transcript (not a raw-audio embedding). This keeps voice and query embeddings in one space.
-- **Model assets** live under `android/app/src/main/assets/models/` and are loaded lazily on first
-  use; the runner must warm models off the UI thread.
+### 5.2 Answer-generation prompt template
+```text
+<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+You are a private memory assistant. Answer the question using only
+the provided memory records. Cite specific sessions. If no evidence
+exists, say "I don't have a memory of that."
+<|eot_id|><|start_header_id|>user<|end_header_id|>
+Question: {selected_question}
+Memory records:
+{session_1_transcript}
+{session_2_transcript}
+{session_3_transcript}
+Answer with evidence:
+<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+```
 
-### 6.1 `OnDeviceModelRunner` interface (Kotlin contract)
+### 5.3 LLM settings
+- Recall cue: `max_tokens=60`, `temperature=0.3`.
+- Answer generation: `max_tokens=200`, `temperature=0.3`.
+- Stop tokens: `["\n\n", "<|eot_id|>"]`.
+- Template fallback if generation times out (>5 s): `"This is {name}."`
+- Quantization: **w4a16** (4-bit weights, 16-bit activations).
+
+---
+
+## 6. Architecture overview
+
+### 6.1 Flutter / Kotlin split
+```text
++----------------------------------------------------------+
+|                    FLUTTER (Dart)                        |
+|  RecallScreen  TimelineScreen  EnrollmentScreen          |
+|  DebugScreen                                             |
+|  All calls via Pigeon typed platform channel             |
++-------------------------+--------------------------------+
+                          | Pigeon
+                          ↓
++----------------------------------------------------------+
+|                    KOTLIN (Android)                      |
+|                                                          |
+| bridge/      MemoryBackendChannel (Pigeon host)          |
+|              DtoMappers                                  |
+|                                                          |
+| service/     MemoryForegroundService                     |
+|              CaptureLoop (periodic tick ~5s)             |
+|                                                          |
+| capture/     CameraFrameProvider (CameraX)               |
+|              TranscriptBuffer (rolling 30s ASR window)   |
+|              LocationProvider (fused + manual label)     |
+|              DemoContextProvider (scripted demo input)   |
+|                                                          |
+| ai/          OnDeviceModelRunner (interface)             |
+|              ExecuTorchModelRunner (MediaPipe + Llama)   |
+|              WhisperQnnRunner (encoder.bin + decoder.bin)|
+|              FakeModelRunner (tests/CI only)             |
+|                                                          |
+| identity/    LandmarkIdentityEngine                      |
+|              IdentityConfig (TAU_KNOWN, etc.)            |
+|              (normalization + dot product — pure Kotlin) |
+|                                                          |
+| recall/      RecallEngine                                |
+|              RetrievalRanker (SQL + recency)             |
+|              QuestionSuggestionEngine                    |
+|              AnswerGenerator                             |
+|                                                          |
+| data/        MemoryDatabase (Room)                       |
+|              PersonProfileEntity / MemorySessionEntity   |
+|              PersonDao / SessionDao                      |
+|              MemoryRepository (single entry point)       |
+|              LandmarkCodec (float32[]↔blob + L2 norm)    |
+|              DemoSeeder                                  |
+|                                                          |
+| enrollment/  PersonEnrollmentManager                     |
++----------------------------------------------------------+
+```
+
+### 6.2 AI module split
+| Class | Models | Runtime |
+| --- | --- | --- |
+| `ExecuTorchModelRunner` | `mediapipe_face_detection.pte`, `mediapipe_face_landmark_detector.pte`, `llama3_2_1b_instruct.pte` | ExecuTorch AAR |
+| `WhisperQnnRunner` | `whisper_encoder.bin`, `whisper_decoder.bin` | QNN SDK |
+| `LandmarkIdentityEngine` | None — pure Kotlin math | N/A |
+| `FakeModelRunner` | Deterministic stubs | Tests/CI only — **never** in demo build |
+
+### 6.3 `OnDeviceModelRunner` interface (Kotlin)
 ```kotlin
 interface OnDeviceModelRunner {
-    fun detectFaces(frame: Bitmap): List<FaceBox>                 // bbox + landmarks
-    fun embedFace(faceCrop: Bitmap): FloatArray                   // 512-d, L2-normalized
-    fun embedImage(frame: Bitmap): FloatArray                     // CLIP image space, L2-normalized
-    fun embedText(text: String): FloatArray                       // CLIP text space, L2-normalized
-    fun transcribe(pcmAudio: ShortArray, sampleRate: Int): String // ASR
-    fun generate(prompt: String, maxTokens: Int = 256): String    // LLM
-    fun warmUp()                                                  // preload/compile models
+    fun detectFaces(frame: Bitmap): List<FaceBox>
+    fun extractLandmarks(faceCrop: Bitmap): FloatArray   // float32[936] raw landmark points
+    fun transcribe(pcmAudio: ShortArray, sampleRate: Int): String
+    fun generate(prompt: String, maxTokens: Int = 256): String
+    fun warmUp()                                         // preload/compile models off UI thread
 }
 ```
-- `ExecuTorchModelRunner` implements all of the above with the committed models.
-- `FakeModelRunner` returns deterministic vectors/strings for tests only.
+> Note: `WhisperQnnRunner` may implement only `transcribe`/`warmUp`, while `ExecuTorchModelRunner`
+> implements detect/landmarks/generate; a composite runner can delegate. There are **no**
+> `embedFace`/`embedImage`/`embedText` methods — landmark extraction replaces all embedding calls.
 
----
-
-## 7. Person identification algorithm
-
-Given the current frame at a tick (or at recall time):
-
-1. **Detect** faces with the detector. If **no face** → treat as *no person* (Case C).
-2. Select the **primary subject** face: largest bbox (closest/most central). Optionally require a
-   minimum face size to avoid bystanders.
-3. **Crop + align** the primary face; compute `q = embedFace(crop)` (512-d, L2-normalized).
-4. **Match** against every `person_profile.face_embedding p_i`: `sim_i = dot(q, p_i)` (cosine, since
-   both normalized).
-5. Let `best = argmax_i sim_i`.
-   - If `sim_best ≥ TAU_KNOWN` (default **0.60**, tune on-device) → **Known person**
-     (`person_id = best`). → Case A.
-   - Else → a person **is present but unmatched** → **Unknown / new person**. → Case B.
-6. Thresholds are centralized constants (`TAU_KNOWN`, min face size) so they can be tuned in one
-   place. Identity matching uses **only** `face_embedding` (never frame/voice embeddings).
-
----
-
-## 8. Insertion flows (write path) — the three cases
-
-`CaptureLoop` tick gathers: primary frame, detected primary person (or none), last-~60s transcript +
-audio clip for `[prev_timestamp, curr_timestamp]`, and location. It computes `frame_embedding =
-embedImage(frame)` and, if a transcript exists, `voice_embedding = embedText(transcript)`. Then it
-runs Section 7 and branches:
-
-### 8.A Known person
-- **No change** to `person_profile_table`.
-- **Insert one row** into `session_table`:
-  `(person_id = matched id, location_label/lat/lng, timestamp, frame_image, voice_clip, transcript,
-  frame_embedding, voice_embedding)`.
-
-### 8.B Unknown / new person (person present and is the subject, but not matched)
-- **Insert a new profile** into `person_profile_table`:
-  `(person_id = new, name = NULL, reference_face_image = saved crop, face_embedding = q,
-  context_notes = inferred-if-any, voice_id = NULL)`.
-  - *Inferred context* (optional): may be produced by the LLM from the current transcript/scene; if
-    nothing reliable, leave `NULL`.
-- **Insert a new session** into `session_table` with the **new `person_id`** (same fields as 8.A).
-
-### 8.C No person in the frame
-- **Insert directly** into `session_table` with **`person_id = NULL`** (location, timestamp, frame,
-  voice/transcript, and both embeddings as available).
-
-### 8.D Skip conditions (avoid always-on recording)
-A tick **does not persist** when none of these hold: a person is present, **or** there is a non-empty
-transcript, **or** the scene changed meaningfully vs. the last stored frame. This keeps the store to
-*meaningful events* only.
-
----
-
-## 9. Querying / recall flows (read path) — the three cases
-
-Triggered by the **Recall** button. The app captures the *current* context (frame → primary person
-via Section 7, current location, optional current transcript) and branches:
-
-### 9.A Known person
-- **Filter** `session_table` by `person_id = matched id` **and** location in the **vicinity** of the
-  current location (Section 10.2 vicinity rule).
-- Build context from the filtered rows → **generate suggested queries** (Section 10.3).
-- When the user **selects a query**, **immediately produce its answer** with evidence (Section 10.4).
-
-### 9.B Unknown / new person
-- The current subject does **not** match any profile → **inform the user that this person is
-  unknown** (offer to enroll/name them via `EnrollmentScreen`). No history is available yet.
-
-### 9.C No person in the frame
-- **Filter** `session_table` by `person_id IS NULL` **and** location in the **vicinity** of the
-  current location, then **vector-search** over the embedding space (Section 10.2) using the current
-  context as the query → suggested queries → answer with evidence.
-
----
-
-## 10. Recall pipeline (retrieval → rank → suggest → answer)
-
-End-to-end inside `RecallEngine`:
-
+### 6.4 Data flow
 ```text
-current context ─► identify subject (Sec 7) ─► branch (Sec 9)
-        │
-        ├─► RetrievalRanker.retrieve(filter)        # candidate session rows
-        ├─► RetrievalRanker.rank(query, candidates) # recency + vector similarity
-        ├─► QuestionSuggestionEngine.suggest(top)   # template-first, optional LLM rewrite
-        └─► AnswerGenerator.answer(selected, top)   # grounded answer + evidence
+WRITE PATH (Capture):
+CaptureLoop → capture/* providers → ExecuTorchModelRunner (detect + landmarks)
+           → LandmarkIdentityEngine (identify) → decision (Case A/B/C)
+           → MemoryRepository → Room DB
+
+READ PATH (Recall):
+Flutter RecallScreen → Pigeon → RecallEngine
+  → LandmarkIdentityEngine (identify current frame)
+  → MemoryRepository (SQL retrieval by person_id + location)
+  → RetrievalRanker (recency sort)
+  → QuestionSuggestionEngine (templates + optional LLM rewrite)
+  → AnswerGenerator (LLM grounded in retrieved sessions)
+  → Pigeon → Flutter
 ```
 
-### 10.1 Query construction
-- The **query embedding** is `embedText(query_text)` in the shared CLIP space. `query_text` is built
-  from the current context (e.g. detected person name/label + location + current transcript), or from
-  a user-selected suggested question.
+---
 
-### 10.2 Retrieval & vicinity
-- **Candidate narrowing first** (cheap SQL): apply the case filter (`person_id = X` /
-  `person_id IS NULL`) and **vicinity** — same `location_label` **or** within a radius
-  (default **75 m**) of `(latitude, longitude)`. Missing location → fall back to person-only filter.
-- **Vector search** over the narrowed candidates: score each candidate by
-  `max( dot(query, frame_embedding), dot(query, voice_embedding) )` (voice term skipped when null).
-  Because frame and voice share the CLIP space, a single text query compares against both.
+## 7. Core working — camera, knowledge graph, identification
 
-### 10.3 Ranking
-`RetrievalRanker` final score = weighted blend of:
-- **Vector similarity** (Section 10.2), and
-- **Recency** (exponential decay on `timestamp`).
-Default weights `0.7 * similarity + 0.3 * recency`; tunable constants. Return top-K (default 5).
+This section reproduces the **core working** requirements. Sub-agents must not deviate.
 
-### 10.4 Suggestions & answers (template-first)
-- `QuestionSuggestionEngine`: derive candidate questions from top rows using **templates** (e.g.
-  "What did {name} say about {topic} at {place}?", "When did I last see {name}?"), where `{topic}` is
-  extracted from transcripts. The LLM may **rewrite** templates into natural phrasing but must not
-  invent topics absent from retrieved rows.
-- `AnswerGenerator`: given the selected question + top rows, the LLM **synthesizes** an answer
-  **grounded** in those rows. The answer is returned **with evidence**: the cited session rows
-  (timestamp, location, frame thumbnail path, transcript snippet). No evidence ⇒ respond
-  "I don't have a memory of that."
+### 7.1 Camera is always live, captured periodically
+The camera is **always live** while `MemoryForegroundService` runs, capturing in a **periodic**
+fashion via `CaptureLoop`. A **tick** fires on cadence (default **~5 s**, configurable) and/or on an
+event trigger (face detected / significant scene change). A tick may **skip** persistence when
+nothing meaningful is present (§9.4) — this is what keeps the app from being an always-on recorder.
+
+### 7.2 What is available at a tick
+- **One or more frames** from the camera.
+- A frame **may or may not contain a person**. If a person is identified → `person_id`; otherwise →
+  **unknown** / none.
+- **Conversation / voice of the last ~30 s** (rolling `TranscriptBuffer`).
+- **Location** (fused location + manual room/location label).
+
+### 7.3 Knowledge graph = two tables
+The knowledge graph is exactly the two tables in §5: `person_profile_table` (the **landmark identity
+index**) and `session_table` (time-stamped events: who (nullable) + where + frame + voice/transcript).
+
+### 7.4 Identifying a person
+Detect the face in the current frame, extract + normalize landmarks, and **dot-product match against
+every `person_profile_table.landmark_vector`** (§2.2). `score >= TAU_KNOWN` ⇒ known; else ⇒ unknown;
+no face ⇒ no person.
 
 ---
 
-## 11. Flutter ↔ Kotlin API contract (Pigeon)
+## 8. Person identification algorithm (detail)
 
-Defined once in `pigeons/memory_backend.dart` and generated into Dart
-(`lib/core/platform/memory_backend_api.dart`) and Kotlin (`bridge/`). Host = Kotlin
-(`MemoryBackendChannel` implements the generated `MemoryBackendApi`). All calls are async.
+Given the current frame (at a capture tick or at recall time):
+1. **Detect** faces (`mediapipe_face_detection.pte`). No face ⇒ **Case C** (no person).
+2. Select the **primary subject**: largest bbox; reject faces smaller than `MIN_FACE_SIZE_PX`.
+3. **Crop** the primary face; `raw = extractLandmarks(crop)` (`float32[936]`).
+4. `q = LandmarkIdentityEngine.normalize(raw)` (centroid-subtract → inter-ocular scale → eye-line
+   rotate → L2-normalize).
+5. For each profile `p_i`: `score_i = dot(q, p_i.landmark_vector)`. Let `best = argmax_i score_i`.
+   - `score_best >= TAU_KNOWN` ⇒ **Known** (`person_id = best`) → Case A.
+   - else ⇒ a person is present but unmatched ⇒ **Unknown/new** → Case B.
+6. Identity uses **only** `landmark_vector`. The face crop is discarded immediately after step 3 —
+   it is **never** stored.
 
-### 11.1 DTOs (Pigeon classes)
+---
+
+## 9. Insertion flows (write path — three cases)
+
+`CaptureLoop` tick gathers: primary frame, detected person (or none), last ~30 s transcript + audio
+clip, and location. Then it runs §8 and branches:
+
+### 9.A Known person (`score >= TAU_KNOWN`)
+- **No change** to `person_profile_table`.
+- **Insert one row** into `session_table` with `person_id = matched_id` (location, timestamp, scene
+  `frame_image`, `voice_clip`, `transcript`).
+
+### 9.B Unknown / new person (present, not matched)
+- **Insert a new profile** into `person_profile_table` with `name = NULL`,
+  `landmark_vector = normalized landmarks (q)`, `context_notes = LLM-inferred-if-any`.
+- **Insert a new session** into `session_table` with the **new `person_id`**.
+
+### 9.C No person in frame
+- **Insert directly** into `session_table` with **`person_id = NULL`**.
+
+### 9.4 Skip conditions (avoid always-on recording)
+A tick **does not persist** unless at least one holds:
+- a person is present, **or**
+- there is a non-empty transcript, **or**
+- the scene changed meaningfully vs. the last stored frame.
+
+---
+
+## 10. Querying / recall flows (read path — three cases)
+
+Triggered by the **Recall** button. The app captures the *current* context (frame → primary person
+via §8, current location, optional current transcript) and branches:
+
+### 10.A Known person
+- **SQL-filter** `session_table` by `person_id = matched_id` **and** location in **vicinity**
+  (same `location_label` **or** within `VICINITY_RADIUS_M` of the current lat/lng).
+- Sort by `timestamp DESC`, take **top 5**.
+- Build suggested questions (§11.3); on selection, **immediately** produce the answer with evidence
+  (§11.4).
+
+### 10.B Unknown / new person
+- Current subject does **not** match any profile ⇒ **inform the user this person is unknown** and
+  offer to enroll/name them via `EnrollmentScreen`. No history is available yet.
+
+### 10.C No person in frame
+- **SQL-filter** `session_table` by `person_id IS NULL` **and** location in **vicinity**, sort by
+  `timestamp DESC`, take **top 5** → suggested questions → answer with evidence.
+- (No vector search — retrieval is SQL + recency per §3.)
+
+---
+
+## 11. Recall pipeline (retrieval → rank → suggest → answer)
+
+```text
+current context → identify subject (§8) → branch (Case A/B/C)
+      │
+      ├── RetrievalRanker.retrieve(filter)       # SQL candidate rows (person_id + vicinity)
+      ├── RetrievalRanker.rank(candidates)       # recency sort (timestamp DESC), top 5
+      ├── QuestionSuggestionEngine.suggest(top)  # template-first, optional LLM rewrite
+      └── AnswerGenerator.answer(selected, top)  # LLM grounded answer + evidence
+```
+
+### 11.1 Query construction
+`query_text` is built from the current context (person name/label + location + current transcript) or
+from a user-selected suggested question. **No embedding** is computed — retrieval is SQL.
+
+### 11.2 Retrieval & vicinity
+- SQL filter: case filter (`person_id = X` / `person_id IS NULL`) **AND** vicinity (same
+  `location_label` **or** within `VICINITY_RADIUS_M`). Missing location ⇒ fall back to the
+  person-only filter.
+- Sort by `timestamp DESC`, return **top 5**.
+
+### 11.3 Question suggestions (template-first)
+Templates over the retrieved rows; the LLM may **rewrite** for natural phrasing but must not invent
+topics absent from the rows:
+- `"What did {name} say about {topic} at {place}?"`
+- `"When did I last see {name}?"`
+- `"What did we discuss at {location_label}?"`
+
+### 11.4 Answer + evidence
+`AnswerGenerator` calls the LLM (§5.2) grounded in the top session transcripts and returns a
+`RecallAnswerDto` whose `evidence` lists the **cited** session rows (session id, timestamp, location,
+optional thumbnail path, transcript snippet). No evidence ⇒ `"I don't have a memory of that."`
+
+---
+
+## 12. Threading rules (non-negotiable)
+- All model inference runs on `Dispatchers.Default` — never the main thread.
+- All Room queries run on `Dispatchers.IO` — never the main thread.
+- All Pigeon host methods run on background dispatchers.
+- UI updates only via `StateFlow` / `LiveData` collected on the main thread.
+- Model **warm-up** happens once at service start — never per-inference.
+
+---
+
+## 13. Flutter ↔ Kotlin API contract (Pigeon)
+
+Defined in `pigeons/memory_backend.dart`. Regenerate after any change:
+```bash
+flutter pub run pigeon --input pigeons/memory_backend.dart
+```
+
+### 13.1 DTOs
 ```dart
-class RecallContextDto {        // current context captured on Recall press
-  int? personId;                // resolved subject, null if none/unknown
+class RecallContextDto {
+  int? personId;
   String? personName;
-  bool personKnown;             // false => Case B (unknown) or Case C (no person)
-  bool personPresent;           // distinguishes Case B (true) vs Case C (false)
+  bool personKnown;     // false => Case B (unknown) or Case C (no person)
+  bool personPresent;   // distinguishes Case B (true) vs Case C (false)
   String? locationLabel;
   double? latitude;
   double? longitude;
@@ -393,7 +474,7 @@ class SuggestionDto {
   String questionText;
 }
 
-class EvidenceDto {            // one cited session row
+class EvidenceDto {
   int sessionId;
   int timestampMs;
   String? locationLabel;
@@ -406,14 +487,13 @@ class RecallAnswerDto {
   List<EvidenceDto> evidence;
 }
 
-class PersonProfileDto {
+class PersonProfileDto {   // NOTE: no referenceFaceImagePath — no face images exist
   int personId;
   String? name;
-  String? referenceFaceImagePath;
   String? contextNotes;
 }
 
-class MemorySessionDto {        // for timeline/debug
+class MemorySessionDto {
   int sessionId;
   int? personId;
   String? personName;
@@ -430,37 +510,37 @@ class ServiceStateDto {
 }
 ```
 
-### 11.2 Host API (Kotlin implements; Flutter calls)
+### 13.2 Host API (Kotlin implements; Flutter calls)
 ```dart
 @HostApi()
 abstract class MemoryBackendApi {
-  // Service lifecycle (capture loop)
+  // Service lifecycle
   void startCapture();
   void stopCapture();
   ServiceStateDto getServiceState();
-  void forceTick();                                   // debug: run one capture tick now
+  void forceTick();                    // debug: run one capture tick now
 
   // Recall flow
-  RecallContextDto captureRecallContext();            // identify subject from current frame
+  RecallContextDto captureRecallContext();
   List<SuggestionDto> getSuggestions(RecallContextDto ctx);
   RecallAnswerDto answerQuestion(RecallContextDto ctx, String suggestionId, String? freeText);
 
-  // Enrollment (Case B follow-up)
+  // Enrollment
   void enrollPerson(int personId, String name, String? contextNotes);
 
   // Timeline / debug
   List<MemorySessionDto> listSessions(int limit, int offset);
   List<PersonProfileDto> listPeople();
-  void seedDemoData();                                // DemoSeeder
+  void seedDemoData();
   void clearAllData();
 }
 ```
-Mapping between DTOs and Room entities lives in `bridge/DtoMappers.kt`. The Flutter side never sees
-raw embeddings — only paths, text, and ids.
+The Flutter side never sees `landmark_vector` — only ids, paths, and text. Mapping lives in
+`bridge/DtoMappers.kt`.
 
 ---
 
-## 12. Repository structure
+## 14. Repository structure
 
 ```text
 memory_recall_app/
@@ -478,7 +558,7 @@ memory_recall_app/
         recall_answer.dart
       platform/
         memory_backend_api.dart              # generated by Pigeon
-        memory_backend_channel.dart          # thin Dart wrapper / DI
+        memory_backend_channel.dart
       theme/
     features/
       recall/
@@ -505,173 +585,318 @@ memory_recall_app/
         CaptureLoop.kt
       capture/
         CameraFrameProvider.kt               # CameraX
-        TranscriptBuffer.kt                  # rolling ~60s ASR window
+        TranscriptBuffer.kt                  # rolling 30s ASR window
         LocationProvider.kt                  # fused + manual label
         DemoContextProvider.kt               # scripted demo input
       data/
-        MemoryDatabase.kt                    # Room DB
+        MemoryDatabase.kt
         PersonProfileEntity.kt
         MemorySessionEntity.kt
         PersonDao.kt
         SessionDao.kt
-        MemoryRepository.kt                  # single entry point over DAOs
+        MemoryRepository.kt                  # single entry point
+        LandmarkCodec.kt                     # float32[]↔blob + L2 norm (was EmbeddingCodec)
         DemoSeeder.kt
       recall/
         RecallEngine.kt
-        RetrievalRanker.kt
+        RetrievalRanker.kt                   # SQL + recency
         QuestionSuggestionEngine.kt
         AnswerGenerator.kt
       ai/
-        OnDeviceModelRunner.kt               # interface (Sec 6.1)
-        ExecuTorchModelRunner.kt             # committed impl
+        OnDeviceModelRunner.kt               # interface (§6.3)
+        ExecuTorchModelRunner.kt             # MediaPipe + Llama
+        WhisperQnnRunner.kt                  # QNN context binary
         FakeModelRunner.kt                   # tests/CI only
+      identity/
+        LandmarkIdentityEngine.kt            # normalization + dot product (pure Kotlin)
+        IdentityConfig.kt                    # TAU_KNOWN, MIN_FACE_SIZE_PX, etc.
       enrollment/
         PersonEnrollmentManager.kt
-    app/src/main/assets/models/              # ExecuTorch model assets
+    app/src/main/assets/models/              # all model files (§15)
+    app/libs/                                # executorch-android-release.aar
 ```
 
 ---
 
-## 13. Module responsibilities (per-file)
+## 15. File placement
 
-### 13.1 Flutter
+```text
+android/app/src/main/assets/models/
+├── mediapipe_face_detection.pte          ← ExecuTorch, QNN/NPU
+├── mediapipe_face_landmark_detector.pte  ← ExecuTorch, QNN/NPU
+├── whisper_encoder.bin                   ← QNN context binary, w8a16
+├── whisper_decoder.bin                   ← QNN context binary, w8a16
+├── metadata.json                         ← Whisper input/output tensor specs
+└── llama3_2_1b_instruct.pte              ← ExecuTorch, w4a16
+
+android/app/libs/
+└── executorch-android-release.aar        ← from github.com/pytorch/executorch/releases
+```
+
+---
+
+## 16. Permissions
+
+```xml
+<uses-permission android:name="android.permission.CAMERA" />
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+```
+Flutter requests runtime permissions before `startCapture()`. Kotlin re-checks and fails safely if
+any are missing. The foreground service declares types `camera|microphone|location`.
+
+---
+
+## 17. Module responsibilities (per-file)
+
+### 17.1 Flutter
 - **`main.dart` / `app.dart`** — bootstrap, theming, routing across the four screens; request runtime
   permissions; obtain the `MemoryBackendApi` instance.
-- **`core/models/*`** — plain Dart models mirroring the Pigeon DTOs for use in widgets/controllers.
+- **`core/models/*`** — plain Dart models mirroring the Pigeon DTOs.
 - **`core/platform/memory_backend_api.dart`** — Pigeon-generated bindings (do not hand-edit).
-- **`core/platform/memory_backend_channel.dart`** — thin wrapper/DI around the generated API; central
-  place for error handling.
-- **`features/recall/*`** — `RecallScreen` press-to-recall UI; `RecallController` calls
-  `captureRecallContext` → renders Case A/B/C; shows suggestions; on tap calls `answerQuestion` and
-  renders the answer + evidence cards.
+- **`core/platform/memory_backend_channel.dart`** — thin wrapper/DI; central error handling.
+- **`features/recall/*`** — press-to-recall UI; renders Case A (name + suggestions + answers +
+  evidence), Case B (unknown → enroll prompt), Case C (location-based suggestions).
 - **`features/timeline/*`** — paged list of `MemorySessionDto` via `listSessions`.
-- **`features/enrollment/*`** — name/label an unknown person (Case B) via `enrollPerson`.
+- **`features/enrollment/*`** — capture 5 frames + name/label an unknown person.
 - **`features/debug/*`** — `startCapture`/`stopCapture`/`forceTick`/`seedDemoData`/`clearAllData`,
-  show `ServiceStateDto`.
+  service state, and the latency dashboard (§20 CP10).
 
-### 13.2 Kotlin — bridge & service
-- **`MainActivity.kt`** — Flutter activity; registers the Pigeon host; holds permission results.
-- **`bridge/MemoryBackendChannel.kt`** — implements the generated host API; delegates to
-  `service`, `recall`, `data`, `enrollment`. No business logic here beyond delegation + mapping.
-- **`bridge/DtoMappers.kt`** — Room entity ⇄ Pigeon DTO conversions; never leaks embeddings to Dart.
-- **`service/MemoryForegroundService.kt`** — foreground service; persistent notification; owns the
-  `CaptureLoop` lifecycle; survives app backgrounding.
-- **`service/CaptureLoop.kt`** — the periodic tick (Section 4.1); orchestrates providers → embeddings
-  → Section 8 decision → `MemoryRepository`; enforces skip conditions (Section 8.D).
+### 17.2 Kotlin — bridge & service
+- **`MainActivity.kt`** — Flutter activity; registers the Pigeon host.
+- **`bridge/MemoryBackendChannel.kt`** — implements the generated host API; pure delegation +
+  mapping, no business logic.
+- **`bridge/DtoMappers.kt`** — Room entity ⇄ Pigeon DTO; never leaks `landmark_vector`.
+- **`service/MemoryForegroundService.kt`** — foreground service (camera|mic|location); persistent
+  notification; owns `CaptureLoop` lifecycle; warms models once at start.
+- **`service/CaptureLoop.kt`** — periodic tick (§7.1); orchestrates providers → identity → §9
+  decision → `MemoryRepository`; enforces skip conditions (§9.4).
 
-### 13.3 Kotlin — capture providers
-- **`capture/CameraFrameProvider.kt`** — CameraX; exposes latest frame(s) as `Bitmap`; keeps camera
-  live while service runs.
-- **`capture/TranscriptBuffer.kt`** — maintains a rolling ~60 s window of audio + ASR transcript;
-  exposes the clip + transcript for `[prev_timestamp, curr_timestamp]`.
-- **`capture/LocationProvider.kt`** — Fused Location Provider + manual room/location label mapping.
-- **`capture/DemoContextProvider.kt`** — scripted frames/transcripts/locations to drive a reliable
-  live demo without depending on the environment.
+### 17.3 Kotlin — capture
+- **`capture/CameraFrameProvider.kt`** — CameraX; latest frame(s) as `Bitmap`.
+- **`capture/TranscriptBuffer.kt`** — rolling 30 s audio window; triggers ASR per tick; exposes
+  `getTranscriptWindow()`.
+- **`capture/LocationProvider.kt`** — fused location + manual room/label mapping.
+- **`capture/DemoContextProvider.kt`** — scripted frames/transcripts/locations for a reliable demo.
 
-### 13.4 Kotlin — recall
-- **`recall/RecallEngine.kt`** — orchestrates Section 10 (identify → retrieve → rank → suggest →
-  answer) and the Case A/B/C branching for querying (Section 9).
-- **`recall/RetrievalRanker.kt`** — SQL candidate narrowing (person/vicinity) + vector scoring +
-  recency blend (Section 10.2–10.3).
-- **`recall/QuestionSuggestionEngine.kt`** — template-first question generation + optional LLM
-  rewrite (Section 10.4).
-- **`recall/AnswerGenerator.kt`** — grounded answer synthesis + evidence assembly (Section 10.4).
+### 17.4 Kotlin — ai & identity
+- **`ai/OnDeviceModelRunner.kt`** — interface (§6.3).
+- **`ai/ExecuTorchModelRunner.kt`** — MediaPipe detect + landmarks + Llama generate; warm-up off UI.
+- **`ai/WhisperQnnRunner.kt`** — QNN context-binary ASR; `SpeechRecognizer` fallback.
+- **`ai/FakeModelRunner.kt`** — deterministic stubs for tests/CI only.
+- **`identity/LandmarkIdentityEngine.kt`** — `normalize()` + `match()` (pure Kotlin math).
+- **`identity/IdentityConfig.kt`** — centralized constants (§2.4).
 
-### 13.5 Kotlin — AI
-- **`ai/OnDeviceModelRunner.kt`** — interface (Section 6.1).
-- **`ai/ExecuTorchModelRunner.kt`** — committed implementation loading the Section 6 models from
-  assets; warm-up off the UI thread.
-- **`ai/FakeModelRunner.kt`** — deterministic stand-in for unit tests/CI only.
-
-### 13.6 Kotlin — data & enrollment
-- **`data/MemoryDatabase.kt`** — Room DB definition + migrations.
-- **`data/PersonProfileEntity.kt` / `MemorySessionEntity.kt`** — exact schema (Section 5).
-- **`data/PersonDao.kt` / `SessionDao.kt`** — queries incl. person-filter, vicinity-filter,
-  paging, and candidate fetch for vector scoring.
-- **`data/MemoryRepository.kt`** — single entry point used by `CaptureLoop`, `RecallEngine`,
-  `enrollment`; owns insertion logic for Cases A/B/C (Section 8).
-- **`data/DemoSeeder.kt`** — inserts a coherent demo graph (people + sessions + embeddings).
-- **`enrollment/PersonEnrollmentManager.kt`** — set/update name + context on a profile (Case B).
+### 17.5 Kotlin — recall, data, enrollment
+- **`recall/RecallEngine.kt`** — orchestrates §10–§11 and Case A/B/C branching.
+- **`recall/RetrievalRanker.kt`** — SQL candidate narrowing + recency sort (top 5).
+- **`recall/QuestionSuggestionEngine.kt`** — template-first suggestions + optional LLM rewrite.
+- **`recall/AnswerGenerator.kt`** — grounded answer + evidence assembly.
+- **`data/MemoryDatabase.kt`** — Room DB + migrations.
+- **`data/PersonProfileEntity.kt` / `MemorySessionEntity.kt`** — exact schema (§5).
+- **`data/PersonDao.kt`** — insert, findAll (for landmark scan), findById, update name/notes.
+- **`data/SessionDao.kt`** — insert, findByPersonId, findByLocation/vicinity, findRecent, listPaged.
+- **`data/MemoryRepository.kt`** — single entry point; owns §9 insertion logic for Cases A/B/C.
+- **`data/LandmarkCodec.kt`** — `float32[]` ⇄ little-endian blob + L2-normalize.
+- **`data/DemoSeeder.kt`** — coherent demo graph (people with `landmark_vector` + sessions with
+  transcripts).
+- **`enrollment/PersonEnrollmentManager.kt`** — capture 5 samples → average → L2-normalize → store;
+  set name/context on a profile.
 
 ---
 
-## 14. Permissions & foreground-service lifecycle
+## 18. What NOT to build (scope boundaries)
 
-### 14.1 Permissions
-- `CAMERA`, `RECORD_AUDIO`, `ACCESS_FINE_LOCATION` (+ `ACCESS_COARSE_LOCATION`),
-  `FOREGROUND_SERVICE` and the typed `FOREGROUND_SERVICE_CAMERA` / `FOREGROUND_SERVICE_MICROPHONE` /
-  `FOREGROUND_SERVICE_LOCATION` (Android 14+), `POST_NOTIFICATIONS`.
-- Flutter requests runtime permissions before `startCapture`; Kotlin re-checks and fails safely if
-  any are missing.
-
-### 14.2 Service lifecycle
-- `startCapture` → start `MemoryForegroundService` (foreground type camera|microphone|location) with
-  a persistent notification → service starts `CaptureLoop`.
-- `stopCapture` → stop loop → stop foreground/service.
-- The loop must keep running while the app is backgrounded; it must stop cleanly on `stopCapture` and
-  on service destruction.
-
-### 14.3 Threading
-- All capture, embedding, ASR, and LLM work runs **off the main thread** (coroutines /
-  `Dispatchers.Default`/`IO`). Pigeon host methods return on background dispatchers and must not block
-  the platform thread.
-
-### 14.4 Retention
-- Provide `clearAllData` (debug) and an optional pruning policy (e.g. cap session count / age) so the
-  store stays bounded. Deleting a profile sets dependent `session.person_id` to `NULL`.
+| | Item |
+| --- | --- |
+| ❌ | Any face image storage |
+| ❌ | Any face embedding storage (no MobileFaceNet) |
+| ❌ | MobileCLIP or any scene/text embedding model |
+| ❌ | Vector similarity search (use SQL + recency instead) |
+| ❌ | Cloud inference of any kind |
+| ❌ | Network calls at runtime (airplane mode must always work) |
+| ❌ | Multi-person frame handling (MVP: primary subject only) |
+| ❌ | Speaker diarization or voiceprints |
+| ❌ | ANN index (linear scan is fine at hackathon scale) |
+| ❌ | ExecuTorch runtime for Whisper (use QNN binary directly) |
+| ❌ | `FakeModelRunner` in the demo build (tests/CI only) |
 
 ---
 
-## 15. Demo seeding & fake data
+## 19. Checkpoint 2.5 — data-layer migration (v1 → v2)
 
-- **`DemoSeeder` (Kotlin)** populates a realistic knowledge graph: a few `person_profile` rows (with
-  face embeddings) and a spread of `session_table` rows across a couple of `location_label`s and
-  timestamps, each with frame + transcript + embeddings — enough to exercise all three recall cases.
-- **`DemoContextProvider` (Kotlin)** supplies scripted current-context inputs for a deterministic live
-  demo (so Recall works even in a noisy hackathon room).
-- **Debug screen** exposes `seedDemoData`, `forceTick`, and `clearAllData`.
-- **`FakeModelRunner`** is for automated tests only — the on-device demo uses
-  `ExecuTorchModelRunner` with real models (Section 6).
+CP2 was built on the v1 embeddings schema. Before any new feature work, migrate the existing data
+layer to the v2 landmark schema. **This is the immediate next task.**
 
----
+### 19.1 Exact file-by-file changes
+1. **`data/PersonProfileEntity.kt`**
+   - Remove columns: `reference_face_image`, `face_embedding`, `voice_id`.
+   - Add column: `landmark_vector` (`BLOB`, `float32[936]`, non-null).
+   - Update `equals`/`hashCode` accordingly (`landmark_vector` uses `contentEquals`/`contentHashCode`).
+2. **`data/MemorySessionEntity.kt`**
+   - Remove columns: `frame_embedding`, `voice_embedding`.
+   - Keep everything else (incl. FK `ON DELETE SET NULL` and the three indices in §3.3).
+3. **`data/EmbeddingCodec.kt` → `data/LandmarkCodec.kt`**
+   - Rename/repurpose to a generic `float32[]` ⇄ blob codec with L2-normalize (it already is one).
+     Used for `landmark_vector` only.
+4. **`data/PersonDao.kt`** — ensure a `findAll()` exists that returns all profiles for the in-memory
+   landmark scan; drop any embedding-specific queries.
+5. **`data/SessionDao.kt`** — remove embedding columns from inserts/selects; add/confirm
+   `findByPersonId`, vicinity query (`person_id` + lat/lng bounding box or `location_label`),
+   `findRecent`, `listPaged`. No vector queries.
+6. **`data/DemoSeeder.kt`** — seed `landmark_vector` for each demo person (deterministic synthetic
+   normalized vectors are fine); stop seeding any frame/voice embeddings.
+7. **`bridge/DtoMappers.kt`** — drop `referenceFaceImagePath` mapping; never map `landmark_vector`.
+8. **`pigeons/memory_backend.dart`** — remove `referenceFaceImagePath` from `PersonProfileDto`;
+   regenerate Dart + Kotlin bindings.
+9. **`bridge/MemoryBackendChannel.kt` / `MainActivity.kt`** — update any canned data / wiring that
+   referenced removed fields so it compiles.
+10. **`data/MemoryDatabase.kt`** — bump the Room schema version; for the hackathon use
+    `fallbackToDestructiveMigration()` (no real user data to preserve).
 
-## 16. Build/run & milestone sequencing (no dates)
-
-**Suggested milestones (each independently demoable):**
-1. **Skeleton & bridge.** Flutter app shell + four screens (stubbed) + Pigeon API generated +
-   `MemoryBackendChannel` returning canned data. Verify Flutter↔Kotlin round-trip.
-2. **Data layer.** Room DB, entities, DAOs, `MemoryRepository`, `DemoSeeder`; Timeline screen reads
-   real rows; `seedDemoData`/`clearAllData` work.
-3. **Capture loop (no AI).** Foreground service + CameraX frame + location + rolling transcript
-   buffer; persists Case C (no-person) rows on a tick. Debug `forceTick` works.
-4. **AI runner.** `ExecuTorchModelRunner` with MobileFaceNet + MobileCLIP-S2 (image+text) + Whisper +
-   Llama 3.2 1B; embeddings/ASR/LLM callable; warm-up off UI thread.
-5. **Identification & full insertion.** Wire Section 7 + Cases A/B (known/new) into the capture loop.
-6. **Recall pipeline.** `RecallEngine` + `RetrievalRanker` + `QuestionSuggestionEngine` +
-   `AnswerGenerator`; RecallScreen renders suggestions + answers + evidence for all three cases.
-7. **Enrollment & polish.** Case B enrollment flow; thresholds tuned on-device; thermals/latency
-   pass on the S25 Ultra.
-
-**Build/run:**
-- `flutter pub get`; generate Pigeon: `flutter pub run pigeon --input pigeons/memory_backend.dart`.
-- Place ExecuTorch `.pte` model assets under `android/app/src/main/assets/models/`.
-- `flutter run` on the S25 Ultra (USB debugging). Grant camera/mic/location/notification permissions.
-
----
-
-## 17. Open questions / future work
-
-- **ANN index.** Linear scan over a narrowed candidate set is fine at hackathon scale; revisit an
-  on-device ANN (e.g. HNSW) if session counts grow large.
-- **Speaker diarization / `voice_id`.** `voice_id` is reserved; a speaker-embedding model could later
-  strengthen identification when faces are absent.
-- **Inferred `context_notes` quality.** LLM-inferred context at enrollment (Case B) may be noisy;
-  decide whether to gate it behind user confirmation.
-- **Vicinity radius & thresholds.** `TAU_KNOWN` (0.60), vicinity radius (75 m), ranking weights
-  (0.7/0.3), and tick cadence (~5 s) are defaults to be tuned on the device.
-- **Multi-person frames.** MVP picks a single primary subject; multi-subject sessions are future work.
+### 19.2 Definition of done
+`seedDemoData()` populates the **new** schema; `TimelineScreen` shows rows; `clearAllData()` wipes;
+the project compiles; **no embedding columns remain** except `landmark_vector`; Pigeon round-trip
+still works (CP1 behavior preserved).
 
 ---
 
-This document is the contract. Sub-agents: if you must deviate, update this file in the same change
-and note it in Section 17.
+## 20. Build checkpoints
+
+Work sequentially. Each checkpoint is independently demoable. Verify the definition of done before
+proceeding. (CP1 ✅, CP2 ⚠️ on old schema → do **CP2.5** first, then CP3 onward.)
+
+### CHECKPOINT 1 — Project skeleton & Pigeon bridge — ✅ DONE
+Flutter shell (4 screens) + Pigeon API + `MemoryBackendChannel` (canned data) + `MainActivity` host.
+**DoD (met):** `RecallScreen` calls `captureRecallContext()` and gets a hardcoded DTO; app runs.
+
+### CHECKPOINT 2 — Data layer — ⚠️ DONE (old schema)
+Room DB + entities + DAOs + `MemoryRepository` + `DemoSeeder` + `DtoMappers` exist, but on the v1
+embeddings schema. **Superseded by CP2.5.**
+
+### CHECKPOINT 2.5 — Schema migration to landmark identity — ⛔ NEXT
+Apply §19. **DoD:** §19.2.
+
+### CHECKPOINT 3 — ExecuTorch model runner (MediaPipe)
+- ExecuTorch AAR in `android/app/libs/`.
+- `ExecuTorchModelRunner.detectFaces()` loads `mediapipe_face_detection.pte` → `List<FaceBox>`.
+- `ExecuTorchModelRunner.extractLandmarks()` loads `mediapipe_face_landmark_detector.pte` →
+  `float32[936]`.
+- Warm up off the UI thread on service start; log per-inference latency (`face_detection`,
+  `landmark_extraction`). On load failure: log + return empty — **never crash**.
+- **DoD:** Point camera at a face → Logcat shows bbox + 936 landmark values within ~100 ms; no crash
+  on model-load failure.
+
+### CHECKPOINT 4 — Landmark identity engine
+- `LandmarkIdentityEngine.normalize(raw): FloatArray` (centroid-subtract → inter-ocular scale →
+  eye-line rotate → L2-normalize → `float32[936]`).
+- `LandmarkIdentityEngine.match(query, profiles): MatchResult` (dot product vs all stored vectors →
+  best match + score).
+- `TAU_KNOWN = 0.92f` in `IdentityConfig` (single source).
+- `PersonEnrollmentManager`: capture 5 samples → average → L2-normalize → store in
+  `person_profile_table`.
+- Unit tests for `normalize()` verifying **scale** and **translation** invariance.
+- **DoD:** Enroll a teammate; point camera at them → correct name with score ≥ 0.92; point at someone
+  else → score < 0.92 → Unknown. **Zero face images in DB.**
+
+### CHECKPOINT 5 — Whisper ASR runner (QNN)
+- `WhisperQnnRunner` loads `whisper_encoder.bin` + `whisper_decoder.bin` via QNN context-binary API.
+- Audio preprocessing: 16 kHz mono PCM16 → log-mel `float32[1, 80, 3000]`.
+- `WhisperQnnRunner.transcribe(pcmAudio): String`.
+- `TranscriptBuffer`: rolling 30 s window; triggers transcription per `CaptureLoop` tick; exposes
+  `getTranscriptWindow()`.
+- Track encoder/decoder latency separately. Fallback: `SpeechRecognizer` if the binary fails — never
+  crash.
+- **DoD:** Speak near the phone → correct transcript in Logcat within ~2 s; fallback activates cleanly
+  if `.bin` files fail to load.
+
+### CHECKPOINT 6 — Capture loop (full write path)
+- `MemoryForegroundService` starts `CaptureLoop` (foreground camera + mic + location).
+- Tick every ~5 s: grab frame → detect + landmarks + identify → get transcript → get location →
+  apply skip conditions (§9.4) → insert session per Case A/B/C (§9).
+- `forceTick()` callable from `DebugScreen` via Pigeon.
+- **DoD:** Service runs in background; after 60 s the DB has multiple session rows; Cases A/B/C all
+  produce correct DB state; `forceTick()` runs one tick immediately; CPU/battery reasonable between
+  ticks.
+
+### CHECKPOINT 7 — Llama LLM runner (ExecuTorch)
+- `ExecuTorchModelRunner.generate(prompt, maxTokens): String` loads `llama3_2_1b_instruct.pte` via
+  the ExecuTorch LLM runner API; warm up off UI; never reload per inference.
+- Recall-cue generation (§5.1, `max_tokens=60`, `temp=0.3`); answer generation (§5.2,
+  `max_tokens=200`, `temp=0.3`); template fallback on >5 s timeout (`"This is {name}."`).
+- Track `llm_generation` latency.
+- **DoD:** Given an enrolled person + a stored session with transcript, pressing Recall generates a
+  natural one-sentence cue within ~8 s total; fallback triggers correctly on timeout.
+
+### CHECKPOINT 8 — Recall pipeline (full read path)
+- `RecallEngine.captureRecallContext()` → identify → `RecallContextDto` (Case A/B/C).
+- `RetrievalRanker.retrieve(ctx)` → SQL filter by `person_id` + vicinity (75 m), sort by recency,
+  top 5.
+- `QuestionSuggestionEngine.suggest(sessions)` → templates + optional LLM rewrite.
+- `AnswerGenerator.answer(question, sessions)` → LLM grounded answer + `RecallAnswerDto` evidence.
+- `RecallScreen` renders Case A (name + suggestions + answers + evidence), Case B (unknown → enroll),
+  Case C (location-based suggestions).
+- **DoD (airplane mode):** Enroll "Sarah" → store 2–3 sessions via `forceTick()` → press Recall at
+  Sarah → name + suggestions appear → tap a question → answer with evidence.
+
+### CHECKPOINT 9 — Enrollment flow
+- `EnrollmentScreen` captures 5 frames via CameraX; extracts + averages landmark vectors.
+- `PersonEnrollmentManager.enroll(personId, name, contextNotes)` updates the profile name.
+- After enrollment the same person is recognized as Case A in future ticks.
+- `enrollPerson()` callable via Pigeon.
+- **DoD:** New person → Case B + enroll prompt; enter "Priya", confirm; point at Priya again → Case A,
+  name shown. **No images stored at any point.**
+
+### CHECKPOINT 10 — Latency dashboard & polish
+- Latency tracking per stage: `face_detection`, `landmark_extraction`, `landmark_matching`,
+  `whisper_encoder`, `whisper_decoder`, `llm_generation`, `total_pipeline`.
+- `DebugScreen` shows a live latency table, color-coded (🟢 <100 ms, 🟡 100–500 ms, 🔴 >500 ms).
+- `DemoContextProvider` (scripted) + `DemoSeeder` (realistic people/sessions) for a reliable demo.
+- Graceful error states: model-load failure → dialog + fallback; no face → "Listening…"; unknown →
+  enroll prompt; LLM timeout → template fallback.
+- Airplane mode verified end to end — zero runtime network calls.
+- **DoD:** Full demo runs without code changes: `seedDemoData()` once, service started, Recall on an
+  enrolled face, natural cue spoken, question answered with evidence, all in airplane mode, latency
+  dashboard live, no crash for 10 minutes of continuous use.
+
+---
+
+## 21. Build & run
+
+```bash
+# Generate Pigeon bindings (after any API change)
+flutter pub run pigeon --input pigeons/memory_backend.dart
+
+# Install Flutter dependencies
+flutter pub get
+
+# Run on S25 Ultra (USB debugging enabled)
+flutter run
+```
+Grant on first launch: Camera, Microphone, Location, Notifications.
+
+---
+
+## 22. Open questions & tuning parameters
+
+| Parameter | Default | Notes |
+| --- | --- | --- |
+| `TAU_KNOWN` | 0.92 | Tune after CP4 testing on real faces. |
+| Tick cadence | ~5 s | Tune for battery impact in CP6. |
+| `VICINITY_RADIUS_M` | 75 m | Adjust if location retrieval is too narrow/broad. |
+| Whisper QNN compatibility | — | Verify `metadata.json` tensor specs match the QNN SDK version on the S25 Ultra. |
+| Llama generation latency | — | If >8 s on device, reduce `max_tokens` or switch to template-only. |
+| Ranking | recency DESC | Pure recency for MVP; revisit only if needed post-CP8. **No vector ranking** (no embeddings). |
+| Enrollment samples | 5 frames | Increase if matching accuracy is low. |
+| Case C retrieval | SQL + recency | Original v1 idea used vector search here; v2 intentionally drops it (no embeddings). Revisit only if recall quality is poor. |
+
+---
+
+*This document is the contract. Sub-agents: if you must deviate, update this file in the same change
+and note it in §22.*
