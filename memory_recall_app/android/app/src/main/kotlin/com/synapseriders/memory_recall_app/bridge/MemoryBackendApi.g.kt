@@ -638,20 +638,21 @@ private open class MemoryBackendApiPigeonCodec : StandardMessageCodec() {
   }
 }
 
+
 /** Generated interface from Pigeon that represents a handler of messages from Flutter. */
 interface MemoryBackendApi {
   fun startCapture()
   fun stopCapture()
-  fun getServiceState(): ServiceStateDto
+  fun getServiceState(callback: (Result<ServiceStateDto>) -> Unit)
   fun forceTick()
   fun captureRecallContext(): RecallContextDto
   fun getSuggestions(ctx: RecallContextDto): List<SuggestionDto>
   fun answerQuestion(ctx: RecallContextDto, suggestionId: String, freeText: String?): RecallAnswerDto
-  fun enrollPerson(personId: Long, name: String, contextNotes: String?)
-  fun listSessions(limit: Long, offset: Long): List<MemorySessionDto>
-  fun listPeople(): List<PersonProfileDto>
-  fun seedDemoData()
-  fun clearAllData()
+  fun enrollPerson(personId: Long, name: String, contextNotes: String?, callback: (Result<Unit>) -> Unit)
+  fun listSessions(limit: Long, offset: Long, callback: (Result<List<MemorySessionDto>>) -> Unit)
+  fun listPeople(callback: (Result<List<PersonProfileDto>>) -> Unit)
+  fun seedDemoData(callback: (Result<Unit>) -> Unit)
+  fun clearAllData(callback: (Result<Unit>) -> Unit)
 
   companion object {
     /** The codec used by MemoryBackendApi. */
@@ -698,12 +699,15 @@ interface MemoryBackendApi {
         val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.memory_recall_app.MemoryBackendApi.getServiceState$separatedMessageChannelSuffix", codec)
         if (api != null) {
           channel.setMessageHandler { _, reply ->
-            val wrapped: List<Any?> = try {
-              listOf(api.getServiceState())
-            } catch (exception: Throwable) {
-              MemoryBackendApiPigeonUtils.wrapError(exception)
+            api.getServiceState{ result: Result<ServiceStateDto> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(MemoryBackendApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -784,13 +788,14 @@ interface MemoryBackendApi {
             val personIdArg = args[0] as Long
             val nameArg = args[1] as String
             val contextNotesArg = args[2] as String?
-            val wrapped: List<Any?> = try {
-              api.enrollPerson(personIdArg, nameArg, contextNotesArg)
-              listOf(null)
-            } catch (exception: Throwable) {
-              MemoryBackendApiPigeonUtils.wrapError(exception)
+            api.enrollPerson(personIdArg, nameArg, contextNotesArg) { result: Result<Unit> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapError(error))
+              } else {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapResult(null))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -803,12 +808,15 @@ interface MemoryBackendApi {
             val args = message as List<Any?>
             val limitArg = args[0] as Long
             val offsetArg = args[1] as Long
-            val wrapped: List<Any?> = try {
-              listOf(api.listSessions(limitArg, offsetArg))
-            } catch (exception: Throwable) {
-              MemoryBackendApiPigeonUtils.wrapError(exception)
+            api.listSessions(limitArg, offsetArg) { result: Result<List<MemorySessionDto>> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(MemoryBackendApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -818,12 +826,15 @@ interface MemoryBackendApi {
         val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.memory_recall_app.MemoryBackendApi.listPeople$separatedMessageChannelSuffix", codec)
         if (api != null) {
           channel.setMessageHandler { _, reply ->
-            val wrapped: List<Any?> = try {
-              listOf(api.listPeople())
-            } catch (exception: Throwable) {
-              MemoryBackendApiPigeonUtils.wrapError(exception)
+            api.listPeople{ result: Result<List<PersonProfileDto>> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(MemoryBackendApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -833,13 +844,14 @@ interface MemoryBackendApi {
         val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.memory_recall_app.MemoryBackendApi.seedDemoData$separatedMessageChannelSuffix", codec)
         if (api != null) {
           channel.setMessageHandler { _, reply ->
-            val wrapped: List<Any?> = try {
-              api.seedDemoData()
-              listOf(null)
-            } catch (exception: Throwable) {
-              MemoryBackendApiPigeonUtils.wrapError(exception)
+            api.seedDemoData{ result: Result<Unit> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapError(error))
+              } else {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapResult(null))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -849,13 +861,14 @@ interface MemoryBackendApi {
         val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.memory_recall_app.MemoryBackendApi.clearAllData$separatedMessageChannelSuffix", codec)
         if (api != null) {
           channel.setMessageHandler { _, reply ->
-            val wrapped: List<Any?> = try {
-              api.clearAllData()
-              listOf(null)
-            } catch (exception: Throwable) {
-              MemoryBackendApiPigeonUtils.wrapError(exception)
+            api.clearAllData{ result: Result<Unit> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapError(error))
+              } else {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapResult(null))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)

@@ -7,11 +7,10 @@ import io.flutter.embedding.engine.FlutterEngine
 
 class MainActivity : FlutterActivity() {
 
-    private val backend = MemoryBackendChannel()
-
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         // Register the Pigeon host so Flutter can call MemoryBackendApi (Section 11/13.2).
+        val backend = MemoryBackendChannel(applicationContext)
         MemoryBackendApi.setUp(flutterEngine.dartExecutor.binaryMessenger, backend)
     }
 }

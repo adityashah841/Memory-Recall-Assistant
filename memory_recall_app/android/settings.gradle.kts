@@ -21,6 +21,8 @@ plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     id("com.android.application") version "9.0.1" apply false
     id("org.jetbrains.kotlin.android") version "2.3.20" apply false
+    // KSP for Room codegen (decoupled KSP2 versioning).
+    id("com.google.devtools.ksp") version "2.3.9" apply false
 }
 
 include(":app")

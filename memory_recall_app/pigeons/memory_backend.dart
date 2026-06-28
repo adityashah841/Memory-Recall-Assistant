@@ -90,6 +90,7 @@ abstract class MemoryBackendApi {
   // Service lifecycle (capture loop)
   void startCapture();
   void stopCapture();
+  @async
   ServiceStateDto getServiceState();
   void forceTick(); // debug: run one capture tick now
 
@@ -103,11 +104,16 @@ abstract class MemoryBackendApi {
   );
 
   // Enrollment (Case B follow-up)
+  @async
   void enrollPerson(int personId, String name, String? contextNotes);
 
   // Timeline / debug
+  @async
   List<MemorySessionDto> listSessions(int limit, int offset);
+  @async
   List<PersonProfileDto> listPeople();
+  @async
   void seedDemoData(); // DemoSeeder
+  @async
   void clearAllData();
 }

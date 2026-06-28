@@ -1,67 +1,40 @@
 package com.synapseriders.memory_recall_app.bridge
 
+import android.content.Context
+import com.synapseriders.memory_recall_app.data.MemoryDatabase
+import com.synapseriders.memory_recall_app.data.MemoryRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
 /**
- * Milestone 1 host implementation of the Pigeon [MemoryBackendApi].
+ * Host implementation of the Pigeon [MemoryBackendApi].
  *
- * For the skeleton milestone this returns canned/stubbed data so the Flutter UI and the
- * Flutter<->Kotlin round-trip can be exercised end to end without the data layer, capture
- * loop, or AI runner (those arrive in later milestones — IMPLEMENTATION_PLAN.md Section 16).
+ * Milestone 2: timeline/enrollment/debug data flows through the real Room data layer via
+ * [MemoryRepository]. The capture loop (service lifecycle) and recall pipeline are still stubbed
+ * and arrive in later milestones (IMPLEMENTATION_PLAN.md Section 16). Per Section 13.2 the channel
+ * holds no business logic beyond delegation + DTO mapping.
  *
- * Per Section 13.2 the real channel contains no business logic beyond delegation + mapping;
- * here the "delegate" is an in-memory stub so the contract is observable today.
+ * `@async` host methods run their work off the platform thread (Section 14.3): each coroutine is
+ * launched on the main dispatcher, offloads the DB call to [Dispatchers.IO], then delivers the
+ * Pigeon callback back on the main thread.
  */
-class MemoryBackendChannel : MemoryBackendApi {
+class MemoryBackendChannel(context: Context) : MemoryBackendApi {
 
-    // Minimal in-memory state so toggles/seed/clear visibly change ServiceStateDto.
+    private val repository: MemoryRepository
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    // In-memory capture flag until the foreground service lands (Milestone 3).
     private var running: Boolean = false
-    private var seeded: Boolean = false
 
-    private val cannedPeople: List<PersonProfileDto> = listOf(
-        PersonProfileDto(
-            personId = 1L,
-            name = "Priya",
-            referenceFaceImagePath = null,
-            contextNotes = "Met at the office cafe; talked about her Kyoto trip.",
-        ),
-        PersonProfileDto(
-            personId = 2L,
-            name = "Marco",
-            referenceFaceImagePath = null,
-            contextNotes = "Climbing gym regular.",
-        ),
-    )
+    init {
+        val db = MemoryDatabase.getInstance(context)
+        repository = MemoryRepository(db.personDao(), db.sessionDao())
+    }
 
-    private val cannedSessions: List<MemorySessionDto> = listOf(
-        MemorySessionDto(
-            sessionId = 101L,
-            personId = 1L,
-            personName = "Priya",
-            locationLabel = "office cafe",
-            timestampMs = 1_719_300_000_000L,
-            frameImagePath = "/stub/frames/priya_cafe.jpg",
-            transcript = "Priya: Kyoto was incredible, the temples in Arashiyama were the highlight.",
-        ),
-        MemorySessionDto(
-            sessionId = 102L,
-            personId = 2L,
-            personName = "Marco",
-            locationLabel = "climbing gym",
-            timestampMs = 1_719_200_000_000L,
-            frameImagePath = "/stub/frames/marco_gym.jpg",
-            transcript = "Marco: I finally sent that V6 on the overhang wall.",
-        ),
-        MemorySessionDto(
-            sessionId = 103L,
-            personId = null, // Case C: no person in frame
-            personName = null,
-            locationLabel = "home desk",
-            timestampMs = 1_719_100_000_000L,
-            frameImagePath = "/stub/frames/desk_whiteboard.jpg",
-            transcript = "Reminder note on the whiteboard about the Friday demo.",
-        ),
-    )
-
-    // --- Service lifecycle ---------------------------------------------------
+    // --- Service lifecycle (in-memory stub) ----------------------------------
 
     override fun startCapture() {
         running = true
@@ -71,17 +44,19 @@ class MemoryBackendChannel : MemoryBackendApi {
         running = false
     }
 
-    override fun getServiceState(): ServiceStateDto = ServiceStateDto(
-        running = running,
-        sessionCount = if (seeded) cannedSessions.size.toLong() else 0L,
-        personCount = if (seeded) cannedPeople.size.toLong() else 0L,
-    )
-
     override fun forceTick() {
         // Stub: a real tick (Milestone 3) would persist a session here.
     }
 
-    // --- Recall flow ---------------------------------------------------------
+    override fun getServiceState(callback: (Result<ServiceStateDto>) -> Unit) = deliver(callback) {
+        ServiceStateDto(
+            running = running,
+            sessionCount = repository.sessionCount(),
+            personCount = repository.personCount(),
+        )
+    }
+
+    // --- Recall flow (canned until Milestone 6) ------------------------------
 
     override fun captureRecallContext(): RecallContextDto = RecallContextDto(
         personId = 1L,
@@ -92,7 +67,7 @@ class MemoryBackendChannel : MemoryBackendApi {
         latitude = 37.4219983,
         longitude = -122.084,
         currentTranscript = null,
-        frameThumbPath = "/stub/frames/priya_cafe.jpg",
+        frameThumbPath = "frames/priya_cafe_1.jpg",
     )
 
     override fun getSuggestions(ctx: RecallContextDto): List<SuggestionDto> = listOf(
@@ -113,7 +88,7 @@ class MemoryBackendChannel : MemoryBackendApi {
                 sessionId = 101L,
                 timestampMs = 1_719_300_000_000L,
                 locationLabel = "office cafe",
-                frameThumbPath = "/stub/frames/priya_cafe.jpg",
+                frameThumbPath = "frames/priya_cafe_1.jpg",
                 transcriptSnippet = "Kyoto was incredible, the temples in Arashiyama were the highlight.",
             ),
         ),
@@ -121,27 +96,49 @@ class MemoryBackendChannel : MemoryBackendApi {
 
     // --- Enrollment ----------------------------------------------------------
 
-    override fun enrollPerson(personId: Long, name: String, contextNotes: String?) {
-        // Stub: Milestone 7 persists name/context onto the profile.
+    override fun enrollPerson(
+        personId: Long,
+        name: String,
+        contextNotes: String?,
+        callback: (Result<Unit>) -> Unit,
+    ) = deliver(callback) {
+        repository.enrollPerson(personId, name, contextNotes)
     }
 
     // --- Timeline / debug ----------------------------------------------------
 
-    override fun listSessions(limit: Long, offset: Long): List<MemorySessionDto> {
-        if (!seeded) return emptyList()
-        val from = offset.toInt().coerceIn(0, cannedSessions.size)
-        val to = (from + limit.toInt()).coerceIn(from, cannedSessions.size)
-        return cannedSessions.subList(from, to)
+    override fun listSessions(
+        limit: Long,
+        offset: Long,
+        callback: (Result<List<MemorySessionDto>>) -> Unit,
+    ) = deliver(callback) {
+        repository.listSessions(limit, offset).map { it.toDto() }
     }
 
-    override fun listPeople(): List<PersonProfileDto> =
-        if (seeded) cannedPeople else emptyList()
-
-    override fun seedDemoData() {
-        seeded = true
+    override fun listPeople(callback: (Result<List<PersonProfileDto>>) -> Unit) = deliver(callback) {
+        repository.listPeople().map { it.toDto() }
     }
 
-    override fun clearAllData() {
-        seeded = false
+    override fun seedDemoData(callback: (Result<Unit>) -> Unit) = deliver(callback) {
+        repository.seedDemo()
+    }
+
+    override fun clearAllData(callback: (Result<Unit>) -> Unit) = deliver(callback) {
+        repository.clearAll()
+    }
+
+    /**
+     * Run [block] off the platform thread and deliver its outcome to [callback] on the main
+     * thread, mapping any throwable to a failed [Result] (surfaced to Dart as a PlatformException).
+     */
+    private fun <T> deliver(callback: (Result<T>) -> Unit, block: suspend () -> T) {
+        scope.launch {
+            val result = try {
+                Result.success(withContext(Dispatchers.IO) { block() })
+            } catch (e: Throwable) {
+                Result.failure(e)
+            }
+            callback(result)
+        }
     }
 }
