@@ -1,4 +1,4 @@
-# Synapse Riders — Memory Recall Assistant
+# Synapse Riders - Memory Recall Assistant
 
 A fully **on-device** memory-recall assistant for the **Samsung Galaxy S25 Ultra (Snapdragon 8 Elite)**.
 Point the camera at the person you're talking to; the app recognizes them, recalls your shared history,
