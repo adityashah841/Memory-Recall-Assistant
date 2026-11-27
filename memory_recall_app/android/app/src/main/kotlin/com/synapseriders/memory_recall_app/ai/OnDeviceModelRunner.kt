@@ -32,6 +32,15 @@ interface OnDeviceModelRunner {
     /** LLM completion (Llama 3.2 1B via Genie); "" when unavailable. */
     fun generate(prompt: String, maxTokens: Int = 256): String
 
+    /**
+     * Chat-style completion from a [system] instruction and a [user] message; "" when unavailable.
+     * Callers use this instead of hand-formatting model-specific prompts. Default: wrap in the
+     * Llama 3 chat template (§7.1/§7.2) and call [generate] — right for the Genie backend; backends
+     * with a native chat API (e.g. Gemini Nano) override it.
+     */
+    fun generateChat(system: String, user: String, maxTokens: Int = 256): String =
+        generate(llama3Chat(system, user), maxTokens)
+
     /** Preload/compile every available model off the UI thread. Idempotent; never throws. */
     fun warmUp()
 
@@ -43,6 +52,15 @@ interface OnDeviceModelRunner {
 
     /** Short human-readable backend name for logs and the debug screen. */
     val backendName: String get() = javaClass.simpleName
+}
+
+/** Llama 3 instruct chat template (IMPLEMENTATION_PLAN.md §7.1/§7.2). */
+fun llama3Chat(system: String, user: String): String = buildString {
+    append("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n")
+    append(system.trim()).append('\n')
+    append("<|eot_id|><|start_header_id|>user<|end_header_id|>\n")
+    append(user.trim()).append('\n')
+    append("<|eot_id|><|start_header_id|>assistant<|end_header_id|>")
 }
 
 /**

@@ -19,6 +19,7 @@ class RecallContext {
     this.longitude,
     this.currentTranscript,
     this.frameThumbPath,
+    this.recallCue,
   });
 
   final RecallContextDto dto;
@@ -31,6 +32,9 @@ class RecallContext {
   final double? longitude;
   final String? currentTranscript;
   final String? frameThumbPath;
+
+  /// Case A: one warm sentence to jog the user's memory of this person (§7.1).
+  final String? recallCue;
 
   RecallCase get recallCase {
     if (personKnown) return RecallCase.knownPerson;
@@ -49,5 +53,6 @@ class RecallContext {
         longitude: dto.longitude,
         currentTranscript: dto.currentTranscript,
         frameThumbPath: dto.frameThumbPath,
+        recallCue: dto.recallCue,
       );
 }

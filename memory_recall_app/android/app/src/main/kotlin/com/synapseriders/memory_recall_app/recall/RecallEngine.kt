@@ -47,6 +47,7 @@ class RecallEngine(
                     name = match.name,
                     known = true,
                     loc = loc,
+                    cue = cueFor(match.personId.toLong(), match.name, loc),
                 )
                 else -> context(personId = null, name = null, known = false, loc = loc) // Case B
             }
@@ -73,7 +74,21 @@ class RecallEngine(
 
     // --- context builders ---
 
-    private fun context(personId: Long?, name: String?, known: Boolean, loc: RecallLocation?) =
+    /** §7.1 recall cue for a known person, grounded in their most relevant sessions. */
+    private suspend fun cueFor(personId: Long, name: String?, loc: RecallLocation?): String? {
+        val who = name ?: return null
+        val rows = ranker.retrieve(personId, loc?.label, loc?.latitude, loc?.longitude)
+            .ifEmpty { ranker.retrieve(personId, null, null, null) }
+        return answerer.recallCue(who, rows)
+    }
+
+    private fun context(
+        personId: Long?,
+        name: String?,
+        known: Boolean,
+        loc: RecallLocation?,
+        cue: String? = null,
+    ) =
         RecallContextDto(
             personId = personId,
             personName = name,
@@ -84,6 +99,7 @@ class RecallEngine(
             longitude = loc?.longitude,
             currentTranscript = null,
             frameThumbPath = null,
+            recallCue = cue,
         )
 
     private fun contextNoPerson(loc: RecallLocation?) = RecallContextDto(
@@ -114,6 +130,7 @@ class RecallEngine(
                 longitude = loc?.longitude ?: withPerson.longitude,
                 currentTranscript = withPerson.transcript,
                 frameThumbPath = withPerson.frameImage,
+                recallCue = person?.let { cueFor(it.personId, it.name, loc) },
             )
         }
         val any = recent.firstOrNull()

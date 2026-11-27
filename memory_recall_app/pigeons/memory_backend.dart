@@ -2,7 +2,7 @@
 // platform contract (IMPLEMENTATION_PLAN.md Section 11).
 //
 // Regenerate after editing this file:
-//   flutter pub run pigeon --input pigeons/memory_backend.dart
+//   dart run pigeon --input pigeons/memory_backend.dart
 //
 // Host = Kotlin (`MemoryBackendChannel` implements the generated `MemoryBackendApi`).
 // The Flutter side never sees raw embeddings — only paths, text, and ids.
@@ -36,6 +36,7 @@ class RecallContextDto {
   double? longitude;
   String? currentTranscript;
   String? frameThumbPath;
+  String? recallCue; // Case A: one warm LLM sentence to jog memory (§7.1), else null
 }
 
 class SuggestionDto {
@@ -101,9 +102,12 @@ abstract class MemoryBackendApi {
   ServiceStateDto getServiceState();
   void forceTick(); // debug: run one capture tick now
 
-  // Recall flow
+  // Recall flow — async so face ID + on-device LLM work never blocks the platform (UI) thread.
+  @async
   RecallContextDto captureRecallContext(); // identify subject from current frame
+  @async
   List<SuggestionDto> getSuggestions(RecallContextDto ctx);
+  @async
   RecallAnswerDto answerQuestion(
     RecallContextDto ctx,
     String suggestionId,

@@ -9,12 +9,19 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Grounded answer generation (IMPLEMENTATION_PLAN.md §7.2, §12.4). Builds the answer prompt from the
- * top retrieved transcripts, runs the LLM with a 5 s budget, and always attaches the cited rows as
- * evidence. On empty rows → "I don't have a memory of that."; on LLM timeout/unavailable → the
- * template fallback `"This is {name}."` (§7.3). Never throws.
+ * Grounded answer + recall-cue generation (IMPLEMENTATION_PLAN.md §7, §12.4).
+ *
+ * Builds model-agnostic system/user prompts from the top retrieved sessions and runs them through
+ * [OnDeviceModelRunner.generateChat] (Gemini Nano or Llama/Genie, whichever backend is active).
+ * Records carry *when* and *where* each memory happened so time/place questions are answerable.
+ * Evidence (the cited rows) is always attached. On empty rows → "I don't have a memory of that.";
+ * when the LLM is unavailable or times out → a deterministic summary of the most recent memory.
+ * Never throws.
  */
-class AnswerGenerator(private val runner: OnDeviceModelRunner) {
+class AnswerGenerator(
+    private val runner: OnDeviceModelRunner,
+    private val clock: () -> Long = { System.currentTimeMillis() },
+) {
 
     suspend fun answer(
         personName: String?,
@@ -22,37 +29,77 @@ class AnswerGenerator(private val runner: OnDeviceModelRunner) {
         rows: List<MemorySessionEntity>,
     ): RecallAnswerDto {
         if (rows.isEmpty()) {
-            return RecallAnswerDto("I don't have a memory of that.", emptyList())
+            return RecallAnswerDto(NO_MEMORY, emptyList())
         }
-        val evidence = rows.take(MAX_EVIDENCE).map { it.toEvidence() }
+        val cited = rows.take(MAX_EVIDENCE)
+        val evidence = cited.map { it.toEvidence() }
 
-        val generated = withTimeoutOrNull(LLM_TIMEOUT_MS) {
-            withContext(Dispatchers.Default) { runner.generate(buildPrompt(question, rows), MAX_TOKENS) }
-        }?.trim()
-
-        val text = if (!generated.isNullOrBlank()) generated else templateAnswer(personName)
+        val user = buildString {
+            if (personName != null) append("The person in front of the user is ").append(personName).append(".\n")
+            append("Question: ").append(question).append("\n\n")
+            append("Memory records (most recent first):\n").append(records(cited)).append('\n')
+            append("Answer the question in 1-3 short sentences using only these records. ")
+            append("Mention when or where it happened if that helps. ")
+            append("If the records don't contain the answer, reply exactly: \"").append(NO_MEMORY).append('"')
+        }
+        val generated = llm(ANSWER_SYSTEM, user, ANSWER_MAX_TOKENS)
+        val text = if (!generated.isNullOrBlank()) generated else fallbackAnswer(personName, cited.first())
         return RecallAnswerDto(text, evidence)
     }
 
-    /** §7.2 answer prompt: grounded strictly in the retrieved transcripts. */
-    private fun buildPrompt(question: String, rows: List<MemorySessionEntity>): String {
-        val records = rows.take(MAX_EVIDENCE)
-            .mapNotNull { it.transcript?.takeIf(String::isNotBlank) }
-            .joinToString("\n")
-        return buildString {
-            append("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n")
-            append("You are a private memory assistant. Answer the question using only the provided ")
-            append("memory records. If no evidence exists say \"I don't have a memory of that.\"\n")
-            append("<|eot_id|><|start_header_id|>user<|end_header_id|>\n")
-            append("Question: ").append(question).append('\n')
-            append("Memory records:\n").append(records).append('\n')
-            append("Answer with evidence:\n")
-            append("<|eot_id|><|start_header_id|>assistant<|end_header_id|>")
+    /**
+     * One warm sentence to jog the user's memory of a known person (§7.1), e.g. "This is Priya — at the
+     * office cafe yesterday she told you about her Kyoto trip." Template fallback if the LLM is unavailable.
+     */
+    suspend fun recallCue(personName: String, rows: List<MemorySessionEntity>): String {
+        val latest = rows.firstOrNull() ?: return "This is $personName."
+        val user = buildString {
+            append("Person: ").append(personName).append('\n')
+            append("Last seen: ").append(timeAgo(latest.timestamp)).append('\n')
+            latest.locationLabel?.let { append("Location: ").append(it).append('\n') }
+            val talk = rows.mapNotNull { it.transcript?.takeIf(String::isNotBlank) }.take(2)
+            if (talk.isNotEmpty()) append("Recent conversation: ").append(talk.joinToString(" | ")).append('\n')
+            append("Generate the recall cue:")
         }
+        val generated = llm(CUE_SYSTEM, user, CUE_MAX_TOKENS)
+        return if (!generated.isNullOrBlank()) generated else fallbackCue(personName, latest)
     }
 
-    private fun templateAnswer(personName: String?): String =
-        if (personName != null) "This is $personName." else "Here's what I remember from nearby."
+    private suspend fun llm(system: String, user: String, maxTokens: Int): String? =
+        withTimeoutOrNull(LLM_TIMEOUT_MS) {
+            withContext(Dispatchers.Default) { runner.generateChat(system, user, maxTokens) }
+        }?.trim()
+
+    private fun records(rows: List<MemorySessionEntity>): String =
+        rows.mapIndexed { i, r ->
+            val where = r.locationLabel?.let { ", $it" } ?: ""
+            val said = r.transcript?.takeIf(String::isNotBlank) ?: "(no conversation recorded)"
+            "${i + 1}. [${timeAgo(r.timestamp)}$where] $said"
+        }.joinToString("\n")
+
+    private fun fallbackAnswer(personName: String?, latest: MemorySessionEntity): String {
+        val who = personName?.let { " with $it" } ?: ""
+        val where = latest.locationLabel?.let { " at $it" } ?: ""
+        val said = latest.transcript?.takeIf(String::isNotBlank)?.let { " — \"${it.take(SNIPPET_LEN)}\"" } ?: ""
+        return "Most recent memory$who: ${timeAgo(latest.timestamp)}$where$said"
+    }
+
+    private fun fallbackCue(personName: String, latest: MemorySessionEntity): String {
+        val where = latest.locationLabel?.let { " at $it" } ?: ""
+        return "This is $personName. You last saw them ${timeAgo(latest.timestamp)}$where."
+    }
+
+    /** "just now", "5 minutes ago", "3 hours ago", "yesterday", "4 days ago". */
+    internal fun timeAgo(timestampMs: Long): String {
+        val mins = (clock() - timestampMs).coerceAtLeast(0) / 60_000
+        return when {
+            mins < 1 -> "just now"
+            mins < 60 -> "$mins minute${if (mins == 1L) "" else "s"} ago"
+            mins < 24 * 60 -> (mins / 60).let { "$it hour${if (it == 1L) "" else "s"} ago" }
+            mins < 48 * 60 -> "yesterday"
+            else -> "${mins / (24 * 60)} days ago"
+        }
+    }
 
     private fun MemorySessionEntity.toEvidence(): EvidenceDto = EvidenceDto(
         sessionId = sessionId,
@@ -63,8 +110,17 @@ class AnswerGenerator(private val runner: OnDeviceModelRunner) {
     )
 
     private companion object {
-        const val LLM_TIMEOUT_MS = 5_000L
-        const val MAX_TOKENS = 200
+        const val NO_MEMORY = "I don't have a memory of that."
+        const val ANSWER_SYSTEM = "You are a private, on-device memory assistant helping someone recall " +
+            "their own past conversations. Answer only from the memory records you are given. Be warm, " +
+            "brief and concrete. Never invent people, places, times or topics that are not in the records."
+        const val CUE_SYSTEM = "You are a private memory assistant. Generate one short warm sentence to " +
+            "help the user remember the person in front of them. Use only the facts given. Never mention " +
+            "memory loss. Maximum 2 sentences."
+        // The LLM call enforces its own (shorter) timeout; this is only a safety net.
+        const val LLM_TIMEOUT_MS = 15_000L
+        const val ANSWER_MAX_TOKENS = 200
+        const val CUE_MAX_TOKENS = 60
         const val MAX_EVIDENCE = 3
         const val SNIPPET_LEN = 160
     }

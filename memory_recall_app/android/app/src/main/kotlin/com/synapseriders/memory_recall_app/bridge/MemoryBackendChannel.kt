@@ -17,7 +17,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 /**
@@ -100,21 +99,26 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
     }
 
     // --- Recall flow (CP7: real read path via RecallEngine) ------------------
-    // These Pigeon methods are synchronous; the recall work is suspend, so we bridge with
-    // runBlocking on Dispatchers.IO (DB queries fast; LLM is time-boxed to 5s and currently falls
-    // back instantly). §24.x: move to @async (Pigeon regen) once the Genie LLM is wired live.
+    // @async Pigeon methods: face ID + on-device LLM run on Dispatchers.IO and the result is
+    // delivered back on the main thread, so the UI thread never blocks (no ANR while Gemini thinks).
 
-    override fun captureRecallContext(): RecallContextDto =
-        runBlocking(Dispatchers.IO) { recallEngine.captureRecallContext() }
+    override fun captureRecallContext(callback: (Result<RecallContextDto>) -> Unit) = deliver(callback) {
+        recallEngine.captureRecallContext()
+    }
 
-    override fun getSuggestions(ctx: RecallContextDto): List<SuggestionDto> =
-        runBlocking(Dispatchers.IO) { recallEngine.getSuggestions(ctx) }
+    override fun getSuggestions(
+        ctx: RecallContextDto,
+        callback: (Result<List<SuggestionDto>>) -> Unit,
+    ) = deliver(callback) {
+        recallEngine.getSuggestions(ctx)
+    }
 
     override fun answerQuestion(
         ctx: RecallContextDto,
         suggestionId: String,
         freeText: String?,
-    ): RecallAnswerDto = runBlocking(Dispatchers.IO) {
+        callback: (Result<RecallAnswerDto>) -> Unit,
+    ) = deliver(callback) {
         recallEngine.answerQuestion(ctx, suggestionId, freeText)
     }
 

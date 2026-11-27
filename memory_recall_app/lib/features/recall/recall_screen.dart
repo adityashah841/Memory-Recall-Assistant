@@ -131,12 +131,31 @@ class _CaseBanner extends StatelessWidget {
         ),
     };
 
+    final theme = Theme.of(buildContext);
+    final cue = context.recallCue;
     return Card(
-      color: Theme.of(buildContext).colorScheme.secondaryContainer,
-      child: ListTile(
-        leading: Icon(icon),
-        title: Text(title),
-        subtitle: Text(subtitle),
+      color: theme.colorScheme.secondaryContainer,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ListTile(
+            leading: Icon(icon),
+            title: Text(title),
+            subtitle: Text(subtitle),
+          ),
+          // §7.1 recall cue: the one warm sentence that jogs the user's memory.
+          if (cue != null && cue.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Text(
+                cue,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: theme.colorScheme.onSecondaryContainer,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

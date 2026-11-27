@@ -31,4 +31,25 @@ class AnswerGeneratorTest {
         assertTrue(a.answerText.isNotBlank()) // FakeModelRunner returns a non-blank completion
         assertEquals("cafe", a.evidence.first().locationLabel)
     }
+
+    @Test
+    fun timeAgoIsHumanReadable() {
+        val now = 10L * 24 * 3_600_000
+        val g = AnswerGenerator(FakeModelRunner(), clock = { now })
+        assertEquals("just now", g.timeAgo(now - 10_000))
+        assertEquals("5 minutes ago", g.timeAgo(now - 5 * 60_000))
+        assertEquals("1 hour ago", g.timeAgo(now - 61 * 60_000))
+        assertEquals("yesterday", g.timeAgo(now - 30L * 3_600_000))
+        assertEquals("3 days ago", g.timeAgo(now - 3L * 24 * 3_600_000))
+    }
+
+    @Test
+    fun fallsBackToMostRecentMemoryWhenLlmUnavailable() = runBlocking {
+        val silent = object : com.synapseriders.memory_recall_app.ai.OnDeviceModelRunner by FakeModelRunner() {
+            override fun generateChat(system: String, user: String, maxTokens: Int) = ""
+        }
+        val a = AnswerGenerator(silent).answer("Priya", "What did we discuss?", listOf(row(1L)))
+        assertTrue(a.answerText.startsWith("Most recent memory with Priya"))
+        assertTrue(a.answerText.contains("cafe"))
+    }
 }

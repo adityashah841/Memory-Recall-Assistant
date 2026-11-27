@@ -14,7 +14,7 @@ import android.util.Log
  * | extractLandmarks  | MediaPipe landmark `.pte`              | unused — ML Kit returns them        |
  * | embedFace         | CavaFace `.bin` (QNN), 112×112 ArcFace | FaceNet-512 `.tflite` (LiteRT), 160 |
  * | transcribe        | Whisper `.bin` (QNN)                   | "" — capture uses SpeechRecognizer  |
- * | generate          | Llama 3.2 1B (Genie)                   | "" until Gemini Nano is wired       |
+ * | generate(Chat)    | Llama 3.2 1B (Genie)                   | Gemini Nano (ML Kit Prompt API)     |
  *
  * Everything runs fully on-device. Never throws; failures degrade to empty results like the other
  * runners.
@@ -23,8 +23,9 @@ class GoogleModelRunner(context: Context) : OnDeviceModelRunner {
 
     private val faces = MlKitFaceDetector()
     private val faceNet = FaceNetEmbedder(context.applicationContext)
+    private val llm = GeminiNanoLlm()
 
-    override val backendName: String = "Google on-device (ML Kit + FaceNet/LiteRT)"
+    override val backendName: String = "Google on-device (ML Kit + FaceNet/LiteRT + Gemini Nano)"
 
     override val faceAlignment: FaceAlignment = FaceAlignment.FACENET_160
 
@@ -44,17 +45,24 @@ class GoogleModelRunner(context: Context) : OnDeviceModelRunner {
 
     override fun transcribe(pcmAudio: ShortArray, sampleRate: Int): String = ""
 
-    override fun generate(prompt: String, maxTokens: Int): String = ""
+    /** Raw prompt → Gemini Nano with no system instruction. Prefer [generateChat]. */
+    override fun generate(prompt: String, maxTokens: Int): String = llm.chat("", prompt, maxTokens)
+
+    /** Gemini Nano has a native system-instruction slot, so no Llama template formatting. */
+    override fun generateChat(system: String, user: String, maxTokens: Int): String =
+        llm.chat(system, user, maxTokens)
 
     override fun warmUp() {
         faces.warmUp()
         faceNet.warmUp()
+        llm.warmUp()
         Log.i(TAG, "warm-up complete ($backendName)")
     }
 
     fun close() {
         faces.close()
         faceNet.close()
+        llm.close()
     }
 
     private companion object {

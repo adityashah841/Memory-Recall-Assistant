@@ -117,6 +117,8 @@ dependencies {
     // ML Kit face detection (bundled model, no Play Services download) + LiteRT for FaceNet-512.
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("com.google.ai.edge.litert:litert:2.3.0")
+    // On-device LLM: Gemini Nano through the ML Kit GenAI Prompt API (Android AICore; best on Pixel 10).
+    implementation("com.google.mlkit:genai-prompt:1.0.0-beta5")
 
     // CP4: JVM unit tests for the identity geometry/matching logic (src/test).
     testImplementation("junit:junit:4.13.2")
