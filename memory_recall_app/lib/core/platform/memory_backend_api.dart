@@ -109,6 +109,7 @@ class RecallContextDto {
     this.longitude,
     this.currentTranscript,
     this.frameThumbPath,
+    this.recallCue,
   });
 
   int? personId;
@@ -129,6 +130,8 @@ class RecallContextDto {
 
   String? frameThumbPath;
 
+  String? recallCue;
+
   List<Object?> _toList() {
     return <Object?>[
       personId,
@@ -140,6 +143,7 @@ class RecallContextDto {
       longitude,
       currentTranscript,
       frameThumbPath,
+      recallCue,
     ];
   }
 
@@ -158,6 +162,7 @@ class RecallContextDto {
       longitude: result[6] as double?,
       currentTranscript: result[7] as String?,
       frameThumbPath: result[8] as String?,
+      recallCue: result[9] as String?,
     );
   }
 
@@ -170,7 +175,7 @@ class RecallContextDto {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(personId, other.personId) && _deepEquals(personName, other.personName) && _deepEquals(personKnown, other.personKnown) && _deepEquals(personPresent, other.personPresent) && _deepEquals(locationLabel, other.locationLabel) && _deepEquals(latitude, other.latitude) && _deepEquals(longitude, other.longitude) && _deepEquals(currentTranscript, other.currentTranscript) && _deepEquals(frameThumbPath, other.frameThumbPath);
+    return _deepEquals(personId, other.personId) && _deepEquals(personName, other.personName) && _deepEquals(personKnown, other.personKnown) && _deepEquals(personPresent, other.personPresent) && _deepEquals(locationLabel, other.locationLabel) && _deepEquals(latitude, other.latitude) && _deepEquals(longitude, other.longitude) && _deepEquals(currentTranscript, other.currentTranscript) && _deepEquals(frameThumbPath, other.frameThumbPath) && _deepEquals(recallCue, other.recallCue);
   }
 
   @override
@@ -179,7 +184,7 @@ class RecallContextDto {
 
   @override
   String toString() {
-    return 'RecallContextDto(personId: $personId, personName: $personName, personKnown: $personKnown, personPresent: $personPresent, locationLabel: $locationLabel, latitude: $latitude, longitude: $longitude, currentTranscript: $currentTranscript, frameThumbPath: $frameThumbPath)';
+    return 'RecallContextDto(personId: $personId, personName: $personName, personKnown: $personKnown, personPresent: $personPresent, locationLabel: $locationLabel, latitude: $latitude, longitude: $longitude, currentTranscript: $currentTranscript, frameThumbPath: $frameThumbPath, recallCue: $recallCue)';
   }
 }
 
@@ -596,6 +601,102 @@ class EnrollResultDto {
   }
 }
 
+/// One frame of the live camera view plus what the identity engine sees in it (demo preview, §14).
+class LivePreviewDto {
+  LivePreviewDto({
+    this.jpeg,
+    required this.width,
+    required this.height,
+    required this.reticle,
+    this.personName,
+    this.similarity,
+    this.faceLeft,
+    this.faceTop,
+    this.faceWidth,
+    this.faceHeight,
+    required this.centerRadius,
+  });
+
+  Uint8List? jpeg;
+
+  int width;
+
+  int height;
+
+  String reticle;
+
+  String? personName;
+
+  double? similarity;
+
+  double? faceLeft;
+
+  double? faceTop;
+
+  double? faceWidth;
+
+  double? faceHeight;
+
+  double centerRadius;
+
+  List<Object?> _toList() {
+    return <Object?>[
+      jpeg,
+      width,
+      height,
+      reticle,
+      personName,
+      similarity,
+      faceLeft,
+      faceTop,
+      faceWidth,
+      faceHeight,
+      centerRadius,
+    ];
+  }
+
+  Object encode() {
+    return _toList();  }
+
+  static LivePreviewDto decode(Object result) {
+    result as List<Object?>;
+    return LivePreviewDto(
+      jpeg: result[0] as Uint8List?,
+      width: result[1]! as int,
+      height: result[2]! as int,
+      reticle: result[3]! as String,
+      personName: result[4] as String?,
+      similarity: result[5] as double?,
+      faceLeft: result[6] as double?,
+      faceTop: result[7] as double?,
+      faceWidth: result[8] as double?,
+      faceHeight: result[9] as double?,
+      centerRadius: result[10]! as double,
+    );
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  bool operator ==(Object other) {
+    if (other is! LivePreviewDto || other.runtimeType != runtimeType) {
+      return false;
+    }
+    if (identical(this, other)) {
+      return true;
+    }
+    return _deepEquals(jpeg, other.jpeg) && _deepEquals(width, other.width) && _deepEquals(height, other.height) && _deepEquals(reticle, other.reticle) && _deepEquals(personName, other.personName) && _deepEquals(similarity, other.similarity) && _deepEquals(faceLeft, other.faceLeft) && _deepEquals(faceTop, other.faceTop) && _deepEquals(faceWidth, other.faceWidth) && _deepEquals(faceHeight, other.faceHeight) && _deepEquals(centerRadius, other.centerRadius);
+  }
+
+  @override
+  // ignore: avoid_equals_and_hash_code_on_mutable_classes
+  int get hashCode => _deepHash(<Object?>[runtimeType, ..._toList()]);
+
+  @override
+  String toString() {
+    return 'LivePreviewDto(jpeg: $jpeg, width: $width, height: $height, reticle: $reticle, personName: $personName, similarity: $similarity, faceLeft: $faceLeft, faceTop: $faceTop, faceWidth: $faceWidth, faceHeight: $faceHeight, centerRadius: $centerRadius)';
+  }
+}
+
 
 class _PigeonCodec extends StandardMessageCodec {
   const _PigeonCodec();
@@ -628,6 +729,9 @@ class _PigeonCodec extends StandardMessageCodec {
     }    else if (value is EnrollResultDto) {
       buffer.putUint8(136);
       writeValue(buffer, value.encode());
+    }    else if (value is LivePreviewDto) {
+      buffer.putUint8(137);
+      writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
     }
@@ -652,6 +756,8 @@ class _PigeonCodec extends StandardMessageCodec {
         return ServiceStateDto.decode(readValue(buffer)!);
       case 136:
         return EnrollResultDto.decode(readValue(buffer)!);
+      case 137:
+        return LivePreviewDto.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);
     }
@@ -799,6 +905,25 @@ class MemoryBackendApi {
     )
     ;
     return pigeonVar_replyValue! as RecallAnswerDto;
+  }
+
+  Future<LivePreviewDto> getLivePreview(int maxWidth) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.memory_recall_app.MemoryBackendApi.getLivePreview$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[maxWidth]);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+
+    final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
+    return pigeonVar_replyValue! as LivePreviewDto;
   }
 
   Future<void> enrollPerson(int personId, String name, String? contextNotes) async {

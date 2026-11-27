@@ -206,7 +206,8 @@ data class RecallContextDto (
   val latitude: Double? = null,
   val longitude: Double? = null,
   val currentTranscript: String? = null,
-  val frameThumbPath: String? = null
+  val frameThumbPath: String? = null,
+  val recallCue: String? = null
 )
  {
   companion object {
@@ -220,7 +221,8 @@ data class RecallContextDto (
       val longitude = pigeonVar_list[6] as Double?
       val currentTranscript = pigeonVar_list[7] as String?
       val frameThumbPath = pigeonVar_list[8] as String?
-      return RecallContextDto(personId, personName, personKnown, personPresent, locationLabel, latitude, longitude, currentTranscript, frameThumbPath)
+      val recallCue = pigeonVar_list[9] as String?
+      return RecallContextDto(personId, personName, personKnown, personPresent, locationLabel, latitude, longitude, currentTranscript, frameThumbPath, recallCue)
     }
   }
   fun toList(): List<Any?> {
@@ -234,6 +236,7 @@ data class RecallContextDto (
       longitude,
       currentTranscript,
       frameThumbPath,
+      recallCue,
     )
   }
   override fun equals(other: Any?): Boolean {
@@ -244,7 +247,7 @@ data class RecallContextDto (
       return true
     }
     val other = other as RecallContextDto
-    return MemoryBackendApiPigeonUtils.deepEquals(this.personId, other.personId) && MemoryBackendApiPigeonUtils.deepEquals(this.personName, other.personName) && MemoryBackendApiPigeonUtils.deepEquals(this.personKnown, other.personKnown) && MemoryBackendApiPigeonUtils.deepEquals(this.personPresent, other.personPresent) && MemoryBackendApiPigeonUtils.deepEquals(this.locationLabel, other.locationLabel) && MemoryBackendApiPigeonUtils.deepEquals(this.latitude, other.latitude) && MemoryBackendApiPigeonUtils.deepEquals(this.longitude, other.longitude) && MemoryBackendApiPigeonUtils.deepEquals(this.currentTranscript, other.currentTranscript) && MemoryBackendApiPigeonUtils.deepEquals(this.frameThumbPath, other.frameThumbPath)
+    return MemoryBackendApiPigeonUtils.deepEquals(this.personId, other.personId) && MemoryBackendApiPigeonUtils.deepEquals(this.personName, other.personName) && MemoryBackendApiPigeonUtils.deepEquals(this.personKnown, other.personKnown) && MemoryBackendApiPigeonUtils.deepEquals(this.personPresent, other.personPresent) && MemoryBackendApiPigeonUtils.deepEquals(this.locationLabel, other.locationLabel) && MemoryBackendApiPigeonUtils.deepEquals(this.latitude, other.latitude) && MemoryBackendApiPigeonUtils.deepEquals(this.longitude, other.longitude) && MemoryBackendApiPigeonUtils.deepEquals(this.currentTranscript, other.currentTranscript) && MemoryBackendApiPigeonUtils.deepEquals(this.frameThumbPath, other.frameThumbPath) && MemoryBackendApiPigeonUtils.deepEquals(this.recallCue, other.recallCue)
   }
 
   override fun hashCode(): Int {
@@ -258,10 +261,11 @@ data class RecallContextDto (
     result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.longitude)
     result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.currentTranscript)
     result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.frameThumbPath)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.recallCue)
     return result
   }
   override fun toString(): String {
-    return "RecallContextDto(personId=$personId, personName=$personName, personKnown=$personKnown, personPresent=$personPresent, locationLabel=$locationLabel, latitude=$latitude, longitude=$longitude, currentTranscript=$currentTranscript, frameThumbPath=$frameThumbPath)"
+    return "RecallContextDto(personId=$personId, personName=$personName, personKnown=$personKnown, personPresent=$personPresent, locationLabel=$locationLabel, latitude=$latitude, longitude=$longitude, currentTranscript=$currentTranscript, frameThumbPath=$frameThumbPath, recallCue=$recallCue)"
   }
 }
 
@@ -611,6 +615,87 @@ data class EnrollResultDto (
     return "EnrollResultDto(success=$success, personId=$personId, samplesCaptured=$samplesCaptured, message=$message)"
   }
 }
+
+/**
+ * One frame of the live camera view plus what the identity engine sees in it (demo preview, §14).
+ *
+ * Generated class from Pigeon that represents data sent in messages.
+ */
+data class LivePreviewDto (
+  val jpeg: ByteArray? = null,
+  val width: Long,
+  val height: Long,
+  val reticle: String,
+  val personName: String? = null,
+  val similarity: Double? = null,
+  val faceLeft: Double? = null,
+  val faceTop: Double? = null,
+  val faceWidth: Double? = null,
+  val faceHeight: Double? = null,
+  val centerRadius: Double
+)
+ {
+  companion object {
+    fun fromList(pigeonVar_list: List<Any?>): LivePreviewDto {
+      val jpeg = pigeonVar_list[0] as ByteArray?
+      val width = pigeonVar_list[1] as Long
+      val height = pigeonVar_list[2] as Long
+      val reticle = pigeonVar_list[3] as String
+      val personName = pigeonVar_list[4] as String?
+      val similarity = pigeonVar_list[5] as Double?
+      val faceLeft = pigeonVar_list[6] as Double?
+      val faceTop = pigeonVar_list[7] as Double?
+      val faceWidth = pigeonVar_list[8] as Double?
+      val faceHeight = pigeonVar_list[9] as Double?
+      val centerRadius = pigeonVar_list[10] as Double
+      return LivePreviewDto(jpeg, width, height, reticle, personName, similarity, faceLeft, faceTop, faceWidth, faceHeight, centerRadius)
+    }
+  }
+  fun toList(): List<Any?> {
+    return listOf(
+      jpeg,
+      width,
+      height,
+      reticle,
+      personName,
+      similarity,
+      faceLeft,
+      faceTop,
+      faceWidth,
+      faceHeight,
+      centerRadius,
+    )
+  }
+  override fun equals(other: Any?): Boolean {
+    if (other == null || other.javaClass != javaClass) {
+      return false
+    }
+    if (this === other) {
+      return true
+    }
+    val other = other as LivePreviewDto
+    return MemoryBackendApiPigeonUtils.deepEquals(this.jpeg, other.jpeg) && MemoryBackendApiPigeonUtils.deepEquals(this.width, other.width) && MemoryBackendApiPigeonUtils.deepEquals(this.height, other.height) && MemoryBackendApiPigeonUtils.deepEquals(this.reticle, other.reticle) && MemoryBackendApiPigeonUtils.deepEquals(this.personName, other.personName) && MemoryBackendApiPigeonUtils.deepEquals(this.similarity, other.similarity) && MemoryBackendApiPigeonUtils.deepEquals(this.faceLeft, other.faceLeft) && MemoryBackendApiPigeonUtils.deepEquals(this.faceTop, other.faceTop) && MemoryBackendApiPigeonUtils.deepEquals(this.faceWidth, other.faceWidth) && MemoryBackendApiPigeonUtils.deepEquals(this.faceHeight, other.faceHeight) && MemoryBackendApiPigeonUtils.deepEquals(this.centerRadius, other.centerRadius)
+  }
+
+  override fun hashCode(): Int {
+    var result = javaClass.hashCode()
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.jpeg)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.width)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.height)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.reticle)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.personName)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.similarity)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.faceLeft)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.faceTop)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.faceWidth)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.faceHeight)
+    result = 31 * result + MemoryBackendApiPigeonUtils.deepHash(this.centerRadius)
+    return result
+  }
+  override fun toString(): String {
+    return "LivePreviewDto(jpeg=${jpeg?.contentToString()}, width=$width, height=$height, reticle=$reticle, personName=$personName, similarity=$similarity, faceLeft=$faceLeft, faceTop=$faceTop, faceWidth=$faceWidth, faceHeight=$faceHeight, centerRadius=$centerRadius)"
+  }
+}
 private open class MemoryBackendApiPigeonCodec : StandardMessageCodec() {
   override fun readValueOfType(type: Byte, buffer: ByteBuffer): Any? {
     return when (type) {
@@ -654,6 +739,11 @@ private open class MemoryBackendApiPigeonCodec : StandardMessageCodec() {
           EnrollResultDto.fromList(it)
         }
       }
+      137.toByte() -> {
+        return (readValue(buffer) as? List<Any?>)?.let {
+          LivePreviewDto.fromList(it)
+        }
+      }
       else -> super.readValueOfType(type, buffer)
     }
   }
@@ -691,6 +781,10 @@ private open class MemoryBackendApiPigeonCodec : StandardMessageCodec() {
         stream.write(136)
         writeValue(stream, value.toList())
       }
+      is LivePreviewDto -> {
+        stream.write(137)
+        writeValue(stream, value.toList())
+      }
       else -> super.writeValue(stream, value)
     }
   }
@@ -703,9 +797,10 @@ interface MemoryBackendApi {
   fun stopCapture()
   fun getServiceState(callback: (Result<ServiceStateDto>) -> Unit)
   fun forceTick()
-  fun captureRecallContext(): RecallContextDto
-  fun getSuggestions(ctx: RecallContextDto): List<SuggestionDto>
-  fun answerQuestion(ctx: RecallContextDto, suggestionId: String, freeText: String?): RecallAnswerDto
+  fun captureRecallContext(callback: (Result<RecallContextDto>) -> Unit)
+  fun getSuggestions(ctx: RecallContextDto, callback: (Result<List<SuggestionDto>>) -> Unit)
+  fun answerQuestion(ctx: RecallContextDto, suggestionId: String, freeText: String?, callback: (Result<RecallAnswerDto>) -> Unit)
+  fun getLivePreview(maxWidth: Long, callback: (Result<LivePreviewDto>) -> Unit)
   fun enrollPerson(personId: Long, name: String, contextNotes: String?, callback: (Result<Unit>) -> Unit)
   fun enrollNewPerson(name: String, contextNotes: String?, callback: (Result<EnrollResultDto>) -> Unit)
   fun listSessions(limit: Long, offset: Long, callback: (Result<List<MemorySessionDto>>) -> Unit)
@@ -792,12 +887,15 @@ interface MemoryBackendApi {
         val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.memory_recall_app.MemoryBackendApi.captureRecallContext$separatedMessageChannelSuffix", codec)
         if (api != null) {
           channel.setMessageHandler { _, reply ->
-            val wrapped: List<Any?> = try {
-              listOf(api.captureRecallContext())
-            } catch (exception: Throwable) {
-              MemoryBackendApiPigeonUtils.wrapError(exception)
+            api.captureRecallContext{ result: Result<RecallContextDto> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(MemoryBackendApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -809,12 +907,15 @@ interface MemoryBackendApi {
           channel.setMessageHandler { message, reply ->
             val args = message as List<Any?>
             val ctxArg = args[0] as RecallContextDto
-            val wrapped: List<Any?> = try {
-              listOf(api.getSuggestions(ctxArg))
-            } catch (exception: Throwable) {
-              MemoryBackendApiPigeonUtils.wrapError(exception)
+            api.getSuggestions(ctxArg) { result: Result<List<SuggestionDto>> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(MemoryBackendApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
           }
         } else {
           channel.setMessageHandler(null)
@@ -828,12 +929,35 @@ interface MemoryBackendApi {
             val ctxArg = args[0] as RecallContextDto
             val suggestionIdArg = args[1] as String
             val freeTextArg = args[2] as String?
-            val wrapped: List<Any?> = try {
-              listOf(api.answerQuestion(ctxArg, suggestionIdArg, freeTextArg))
-            } catch (exception: Throwable) {
-              MemoryBackendApiPigeonUtils.wrapError(exception)
+            api.answerQuestion(ctxArg, suggestionIdArg, freeTextArg) { result: Result<RecallAnswerDto> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(MemoryBackendApiPigeonUtils.wrapResult(data))
+              }
             }
-            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.memory_recall_app.MemoryBackendApi.getLivePreview$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val maxWidthArg = args[0] as Long
+            api.getLivePreview(maxWidthArg) { result: Result<LivePreviewDto> ->
+              val error = result.exceptionOrNull()
+              if (error != null) {
+                reply.reply(MemoryBackendApiPigeonUtils.wrapError(error))
+              } else {
+                val data = result.getOrNull()
+                reply.reply(MemoryBackendApiPigeonUtils.wrapResult(data))
+              }
+            }
           }
         } else {
           channel.setMessageHandler(null)
