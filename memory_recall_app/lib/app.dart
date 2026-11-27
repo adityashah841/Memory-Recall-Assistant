@@ -37,17 +37,18 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
 
-  late final List<Widget> _screens = [
-    RecallScreen(backend: widget.backend),
-    TimelineScreen(backend: widget.backend),
-    EnrollmentScreen(backend: widget.backend),
-    DebugScreen(backend: widget.backend),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    // Rebuilt each time so the Recall tab knows whether it's visible (its live camera view only
+    // polls while on screen). IndexedStack keeps each screen's State alive across tab switches.
+    final screens = [
+      RecallScreen(backend: widget.backend, visible: _index == 0),
+      TimelineScreen(backend: widget.backend),
+      EnrollmentScreen(backend: widget.backend),
+      DebugScreen(backend: widget.backend),
+    ];
     return Scaffold(
-      body: IndexedStack(index: _index, children: _screens),
+      body: IndexedStack(index: _index, children: screens),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) => setState(() => _index = i),

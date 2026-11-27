@@ -5,13 +5,17 @@ import '../../core/models/recall_context.dart';
 import '../../core/platform/memory_backend_channel.dart';
 import 'recall_controller.dart';
 import 'widgets/evidence_card.dart';
+import 'widgets/live_camera_view.dart';
 
 /// Press-to-recall screen (Section 13.1). Renders Case A/B/C and, on Case A/C,
 /// suggested questions whose answers come with cited evidence.
 class RecallScreen extends StatefulWidget {
-  const RecallScreen({super.key, required this.backend});
+  const RecallScreen({super.key, required this.backend, this.visible = true});
 
   final MemoryBackendChannel backend;
+
+  /// Whether this tab is on screen — the live camera view only polls while visible.
+  final bool visible;
 
   @override
   State<RecallScreen> createState() => _RecallScreenState();
@@ -41,6 +45,8 @@ class _RecallScreenState extends State<RecallScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        LiveCameraView(backend: widget.backend, active: widget.visible),
+        const SizedBox(height: 16),
         FilledButton.icon(
           onPressed: _controller.capturing ? null : _controller.recall,
           icon: _controller.capturing

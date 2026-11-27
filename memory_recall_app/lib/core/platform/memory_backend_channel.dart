@@ -32,6 +32,10 @@ class MemoryBackendChannel {
   ) =>
       _guard(() => _api.answerQuestion(ctx, suggestionId, freeText));
 
+  // --- Live camera view ---
+  Future<LivePreviewDto> getLivePreview(int maxWidth) =>
+      _guard(() => _api.getLivePreview(maxWidth));
+
   // --- Enrollment ---
   Future<void> enrollPerson(int personId, String name, String? contextNotes) =>
       _guard(() => _api.enrollPerson(personId, name, contextNotes));

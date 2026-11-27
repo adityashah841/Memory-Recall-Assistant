@@ -9,6 +9,7 @@ import com.synapseriders.memory_recall_app.identity.FaceEmbeddingEngine
 import com.synapseriders.memory_recall_app.recall.AnswerGenerator
 import com.synapseriders.memory_recall_app.recall.QuestionSuggestionEngine
 import com.synapseriders.memory_recall_app.recall.RecallEngine
+import com.synapseriders.memory_recall_app.recall.LivePreviewProvider
 import com.synapseriders.memory_recall_app.recall.RecallLocation
 import com.synapseriders.memory_recall_app.recall.RecallSpeaker
 import com.synapseriders.memory_recall_app.recall.RetrievalRanker
@@ -48,11 +49,11 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
     // CP8 proactive enrollment (5-frame capture → average → store), reads the live camera frame.
     private val enrollmentManager: PersonEnrollmentManager
 
+    // Live camera view + targeting state for the Recall screen.
+    private val livePreview: LivePreviewProvider
+
     // Reads recall cues / answers aloud (CP9 "cue spoken").
     private val speaker = RecallSpeaker(context)
-
-    // Mirrors the foreground service's running state for getServiceState.
-    private var running: Boolean = false
 
     init {
         val db = MemoryDatabase.getInstance(context)
@@ -72,6 +73,7 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
             },
         )
         speaker.warmUp()
+        livePreview = LivePreviewProvider(personDao, FaceEmbeddingEngine(modelRunner))
         enrollmentManager = PersonEnrollmentManager(
             personDao = personDao,
             faceEngine = FaceEmbeddingEngine(modelRunner),
@@ -83,12 +85,10 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
 
     override fun startCapture() {
         MemoryForegroundService.start(appContext)
-        running = true
     }
 
     override fun stopCapture() {
         MemoryForegroundService.stop(appContext)
-        running = false
     }
 
     override fun forceTick() {
@@ -97,7 +97,7 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
 
     override fun getServiceState(callback: (Result<ServiceStateDto>) -> Unit) = deliver(callback) {
         ServiceStateDto(
-            running = running,
+            running = MemoryForegroundService.running,
             sessionCount = repository.sessionCount(),
             personCount = repository.personCount(),
         )
@@ -129,6 +129,11 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
     ) = deliver(callback) {
         recallEngine.answerQuestion(ctx, suggestionId, freeText).also { speaker.speak(it.answerText) }
     }
+
+    // --- Live camera view (Phase 4 preview) ----------------------------------
+
+    override fun getLivePreview(maxWidth: Long, callback: (Result<LivePreviewDto>) -> Unit) =
+        deliver(callback) { livePreview.snapshot(maxWidth.toInt()) }
 
     // --- Enrollment ----------------------------------------------------------
 

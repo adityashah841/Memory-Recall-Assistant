@@ -104,7 +104,7 @@ class _DebugScreenState extends State<DebugScreen> {
                     onPressed:
                         _controller.busy ? null : _controller.seedDemoData,
                     icon: const Icon(Icons.dataset),
-                    label: const Text('Seed demo data'),
+                    label: const Text('Seed demo data (replaces everything)'),
                   ),
                   OutlinedButton.icon(
                     onPressed:

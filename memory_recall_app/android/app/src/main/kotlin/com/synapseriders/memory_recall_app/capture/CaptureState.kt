@@ -16,6 +16,10 @@ object CaptureState {
     @Volatile var latestFrame: Bitmap? = null
     @Volatile var latestLocation: LocationFix? = null
 
+    /** `SystemClock.elapsedRealtime()` of the last live-preview request; while recent, the camera
+     *  delivers frames faster so the on-screen preview is smooth. */
+    @Volatile var previewRequestedAt: Long = 0L
+
     fun clear() {
         latestFrame = null
         latestLocation = null

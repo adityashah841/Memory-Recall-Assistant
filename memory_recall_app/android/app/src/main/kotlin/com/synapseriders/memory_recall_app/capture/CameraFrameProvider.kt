@@ -24,7 +24,7 @@ import java.util.concurrent.Executors
  * Frames are rotated by the sensor's `rotationDegrees` so faces are upright for detection/alignment,
  * requested at ~720p so faces at conversation distance are large enough to identify, and converted at
  * most every [MIN_FRAME_INTERVAL_MS] (consumers read every few seconds; converting all 30 fps would
- * just burn battery).
+ * just burn battery) — or every [PREVIEW_FRAME_INTERVAL_MS] while the live preview is on screen.
  */
 class CameraFrameProvider(private val context: Context) {
 
@@ -55,7 +55,9 @@ class CameraFrameProvider(private val context: Context) {
                 analysis.setAnalyzer(analysisExecutor) { proxy ->
                     try {
                         val now = SystemClock.elapsedRealtime()
-                        if (now - lastFrameAt >= MIN_FRAME_INTERVAL_MS) {
+                        val previewing = now - CaptureState.previewRequestedAt < PREVIEW_ACTIVE_MS
+                        val interval = if (previewing) PREVIEW_FRAME_INTERVAL_MS else MIN_FRAME_INTERVAL_MS
+                        if (now - lastFrameAt >= interval) {
                             lastFrameAt = now
                             CaptureState.latestFrame = proxy.toUprightBitmap()
                         }
@@ -94,5 +96,8 @@ class CameraFrameProvider(private val context: Context) {
         const val TAG = "CameraFrameProvider"
         val TARGET_SIZE = Size(1280, 720)
         const val MIN_FRAME_INTERVAL_MS = 250L
+        /** Faster frames (~12 fps) while the Recall screen's live preview is polling. */
+        const val PREVIEW_FRAME_INTERVAL_MS = 80L
+        const val PREVIEW_ACTIVE_MS = 2_000L
     }
 }

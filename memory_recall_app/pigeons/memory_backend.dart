@@ -89,6 +89,21 @@ class EnrollResultDto {
   String? message;
 }
 
+/// One frame of the live camera view plus what the identity engine sees in it (demo preview, §14).
+class LivePreviewDto {
+  Uint8List? jpeg; // null when the camera isn't running
+  int width; // jpeg pixel size
+  int height;
+  String reticle; // 'idle' | 'known' | 'unknown'
+  String? personName;
+  double? similarity; // cosine score of the best match, 0..1
+  double? faceLeft; // centered face bbox, normalized 0..1 (null if none)
+  double? faceTop;
+  double? faceWidth;
+  double? faceHeight;
+  double centerRadius; // targeting zone radius, as a fraction of the frame's shorter side
+}
+
 // ---------------------------------------------------------------------------
 // 11.2 Host API (Kotlin implements; Flutter calls). All calls are async.
 // ---------------------------------------------------------------------------
@@ -113,6 +128,10 @@ abstract class MemoryBackendApi {
     String suggestionId,
     String? freeText,
   );
+
+  // Live camera view for the Recall screen: latest frame (downscaled to maxWidth) + targeting state.
+  @async
+  LivePreviewDto getLivePreview(int maxWidth);
 
   // Enrollment (Case B follow-up): name an existing unknown profile.
   @async

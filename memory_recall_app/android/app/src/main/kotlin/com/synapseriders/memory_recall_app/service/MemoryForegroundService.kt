@@ -94,6 +94,7 @@ class MemoryForegroundService : LifecycleService() {
     }
 
     private fun startCapture() {
+        running = true
         scope.launch { runner.warmUp() }
         if (hasPerm(Manifest.permission.CAMERA)) camera.start(this)
         if (hasPerm(Manifest.permission.ACCESS_FINE_LOCATION) ||
@@ -176,6 +177,7 @@ class MemoryForegroundService : LifecycleService() {
     }
 
     private fun stopCapture() {
+        running = false
         tickJob?.cancel(); tickJob = null
         try { camera.stop() } catch (_: Throwable) {}
         try { location.stop() } catch (_: Throwable) {}
@@ -194,6 +196,10 @@ class MemoryForegroundService : LifecycleService() {
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 
     companion object {
+        /** True while the capture loop is live — the single source of truth for the UI's on/off state. */
+        @Volatile var running: Boolean = false
+            private set
+
         const val ACTION_START = "com.synapseriders.memory_recall_app.START"
         const val ACTION_STOP = "com.synapseriders.memory_recall_app.STOP"
         const val ACTION_TICK = "com.synapseriders.memory_recall_app.TICK"
