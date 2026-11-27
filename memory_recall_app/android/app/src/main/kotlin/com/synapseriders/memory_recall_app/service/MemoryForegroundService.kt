@@ -18,6 +18,7 @@ import com.synapseriders.memory_recall_app.ai.ModelRuntime
 import com.synapseriders.memory_recall_app.capture.AudioCaptureProvider
 import com.synapseriders.memory_recall_app.capture.CameraFrameProvider
 import com.synapseriders.memory_recall_app.capture.CaptureState
+import com.synapseriders.memory_recall_app.capture.LiveSpeechTranscriber
 import com.synapseriders.memory_recall_app.capture.LocationProvider
 import com.synapseriders.memory_recall_app.capture.SceneChangeDetector
 import com.synapseriders.memory_recall_app.capture.TranscriptBuffer
@@ -54,6 +55,7 @@ class MemoryForegroundService : LifecycleService() {
     private val camera by lazy { CameraFrameProvider(this) }
     private val location by lazy { LocationProvider(this) }
     private var audio: AudioCaptureProvider? = null
+    private var speech: LiveSpeechTranscriber? = null
     private var tickJob: Job? = null
 
     override fun onCreate() {
@@ -100,7 +102,13 @@ class MemoryForegroundService : LifecycleService() {
             location.start()
         }
         if (hasPerm(Manifest.permission.RECORD_AUDIO)) {
-            audio = AudioCaptureProvider(transcriptBuffer).also { it.start() }
+            if (runner.transcribesAudio) {
+                // Qualcomm path: raw PCM → rolling buffer → Whisper each tick.
+                if (audio == null) audio = AudioCaptureProvider(transcriptBuffer).also { it.start() }
+            } else {
+                // Google path: Android's live on-device recognizer owns the mic.
+                if (speech == null) speech = LiveSpeechTranscriber(this).also { it.start() }
+            }
         }
         if (tickJob == null) {
             tickJob = scope.launch {
@@ -112,8 +120,12 @@ class MemoryForegroundService : LifecycleService() {
         }
     }
 
-    /** Whisper transcript of the rolling window ("" until the Whisper QNN libs are present). */
+    /**
+     * Speech since the last tick: drained from the live recognizer on the Google path, or Whisper over
+     * the rolling 30 s window on the Qualcomm path ("" until the Whisper QNN libs are present).
+     */
     private fun transcribe(): String {
+        speech?.let { return it.drain() }
         val window = transcriptBuffer.window()
         if (window.isEmpty()) return ""
         val text = runner.transcribe(window, SAMPLE_RATE)
@@ -168,6 +180,7 @@ class MemoryForegroundService : LifecycleService() {
         try { camera.stop() } catch (_: Throwable) {}
         try { location.stop() } catch (_: Throwable) {}
         audio?.stop(); audio = null
+        speech?.stop(); speech = null
         CaptureState.clear()
     }
 

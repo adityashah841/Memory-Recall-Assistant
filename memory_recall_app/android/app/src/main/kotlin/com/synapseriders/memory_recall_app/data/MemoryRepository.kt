@@ -12,7 +12,7 @@ class MemoryRepository(
 
     // --- Capture write path (§10, CP6) ---
     override suspend fun recordKnown(personId: Long, rec: CaptureRecord) {
-        sessionDao.insert(rec.toSession(personId))
+        insertOrMerge(rec.toSession(personId))
     }
 
     override suspend fun recordUnknown(faceEmbedding: ByteArray, rec: CaptureRecord): Long {
@@ -30,7 +30,29 @@ class MemoryRepository(
     }
 
     override suspend fun recordNoPerson(rec: CaptureRecord) {
-        sessionDao.insert(rec.toSession(null))
+        insertOrMerge(rec.toSession(null))
+    }
+
+    /**
+     * One diary entry per conversation, not one per 5 s tick: if the newest session is about the same
+     * subject (same person, or both no-person) and was last updated within [MERGE_WINDOW_MS], append
+     * this tick's transcript to it and bump its time; otherwise insert a new session. Keeps the
+     * timeline readable and gives the LLM whole conversations to answer from.
+     */
+    private suspend fun insertOrMerge(session: MemorySessionEntity) {
+        val last = sessionDao.findRecent(1).firstOrNull()
+        val gap = session.timestamp - (last?.timestamp ?: Long.MIN_VALUE / 2)
+        if (last != null && last.personId == session.personId && gap in 0..MERGE_WINDOW_MS) {
+            sessionDao.extend(last.sessionId, joinTranscripts(last.transcript, session.transcript), session.timestamp)
+        } else {
+            sessionDao.insert(session)
+        }
+    }
+
+    private fun joinTranscripts(a: String?, b: String?): String? = when {
+        a.isNullOrBlank() -> b
+        b.isNullOrBlank() -> a
+        else -> "${a.trimEnd()} ${b.trim()}"
     }
 
     private fun CaptureRecord.toSession(personId: Long?) = MemorySessionEntity(
@@ -74,5 +96,10 @@ class MemoryRepository(
         // Children first to avoid transient FK violations.
         sessionDao.clear()
         personDao.clear()
+    }
+
+    companion object {
+        /** Ticks closer than this (same subject) extend the same diary entry. */
+        const val MERGE_WINDOW_MS = 60_000L
     }
 }

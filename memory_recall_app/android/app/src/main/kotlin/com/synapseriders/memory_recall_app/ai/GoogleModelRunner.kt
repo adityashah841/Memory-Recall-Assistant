@@ -13,7 +13,7 @@ import android.util.Log
  * | detectFaces       | MediaPipe `.pte` (ExecuTorch)          | ML Kit face detection (+landmarks)  |
  * | extractLandmarks  | MediaPipe landmark `.pte`              | unused — ML Kit returns them        |
  * | embedFace         | CavaFace `.bin` (QNN), 112×112 ArcFace | FaceNet-512 `.tflite` (LiteRT), 160 |
- * | transcribe        | Whisper `.bin` (QNN)                   | "" — capture uses SpeechRecognizer  |
+ * | transcribe        | Whisper `.bin` (QNN)                   | live on-device SpeechRecognizer     |
  * | generate(Chat)    | Llama 3.2 1B (Genie)                   | Gemini Nano (ML Kit Prompt API)     |
  *
  * Everything runs fully on-device. Never throws; failures degrade to empty results like the other
@@ -42,6 +42,9 @@ class GoogleModelRunner(context: Context) : OnDeviceModelRunner {
     override fun extractLandmarks(faceCrop: Bitmap): FloatArray = FloatArray(0)
 
     override fun embedFace(alignedFace: Bitmap): FloatArray = faceNet.embed(alignedFace)
+
+    /** Speech comes from Android's live on-device recognizer (capture/LiveSpeechTranscriber). */
+    override val transcribesAudio: Boolean = false
 
     override fun transcribe(pcmAudio: ShortArray, sampleRate: Int): String = ""
 

@@ -50,6 +50,12 @@ interface OnDeviceModelRunner {
     /** Cosine-similarity threshold for a "known" match with this backend's embedder. */
     val matchThreshold: Float get() = IdentityConfig.TAU_KNOWN
 
+    /**
+     * True if [transcribe] turns raw PCM into text (Whisper on QNN). False ⇒ the capture service
+     * hands the mic to Android's live `SpeechRecognizer` instead (`LiveSpeechTranscriber`).
+     */
+    val transcribesAudio: Boolean get() = true
+
     /** Short human-readable backend name for logs and the debug screen. */
     val backendName: String get() = javaClass.simpleName
 }
