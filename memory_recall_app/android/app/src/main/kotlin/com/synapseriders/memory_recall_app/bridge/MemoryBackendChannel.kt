@@ -10,6 +10,7 @@ import com.synapseriders.memory_recall_app.recall.AnswerGenerator
 import com.synapseriders.memory_recall_app.recall.QuestionSuggestionEngine
 import com.synapseriders.memory_recall_app.recall.RecallEngine
 import com.synapseriders.memory_recall_app.recall.RecallLocation
+import com.synapseriders.memory_recall_app.recall.RecallSpeaker
 import com.synapseriders.memory_recall_app.recall.RetrievalRanker
 import com.synapseriders.memory_recall_app.enrollment.PersonEnrollmentManager
 import com.synapseriders.memory_recall_app.service.MemoryForegroundService
@@ -47,6 +48,9 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
     // CP8 proactive enrollment (5-frame capture → average → store), reads the live camera frame.
     private val enrollmentManager: PersonEnrollmentManager
 
+    // Reads recall cues / answers aloud (CP9 "cue spoken").
+    private val speaker = RecallSpeaker(context)
+
     // Mirrors the foreground service's running state for getServiceState.
     private var running: Boolean = false
 
@@ -67,6 +71,7 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
                 CaptureState.latestLocation?.let { RecallLocation(it.label, it.latitude, it.longitude) }
             },
         )
+        speaker.warmUp()
         enrollmentManager = PersonEnrollmentManager(
             personDao = personDao,
             faceEngine = FaceEmbeddingEngine(modelRunner),
@@ -103,7 +108,10 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
     // delivered back on the main thread, so the UI thread never blocks (no ANR while Gemini thinks).
 
     override fun captureRecallContext(callback: (Result<RecallContextDto>) -> Unit) = deliver(callback) {
-        recallEngine.captureRecallContext()
+        speaker.stop()
+        recallEngine.captureRecallContext().also { ctx ->
+            speaker.speak(ctx.recallCue ?: if (ctx.personPresent && !ctx.personKnown) UNKNOWN_SPOKEN else null)
+        }
     }
 
     override fun getSuggestions(
@@ -119,7 +127,7 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
         freeText: String?,
         callback: (Result<RecallAnswerDto>) -> Unit,
     ) = deliver(callback) {
-        recallEngine.answerQuestion(ctx, suggestionId, freeText)
+        recallEngine.answerQuestion(ctx, suggestionId, freeText).also { speaker.speak(it.answerText) }
     }
 
     // --- Enrollment ----------------------------------------------------------
@@ -182,5 +190,9 @@ class MemoryBackendChannel(context: Context) : MemoryBackendApi {
             }
             callback(result)
         }
+    }
+
+    private companion object {
+        const val UNKNOWN_SPOKEN = "I don't recognize this person yet."
     }
 }

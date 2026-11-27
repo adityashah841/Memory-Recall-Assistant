@@ -88,9 +88,15 @@ interface SessionDao {
         maxLng: Double,
     ): List<MemorySessionEntity>
 
-    /** Extend an ongoing conversation row: replace its transcript and bump its time to [timestamp]. */
-    @Query("UPDATE session_table SET transcript = :transcript, timestamp = :timestamp WHERE session_id = :sessionId")
-    suspend fun extend(sessionId: Long, transcript: String?, timestamp: Long)
+    /**
+     * Extend an ongoing conversation row: set its subject, replace its transcript, and bump its time to
+     * [timestamp].
+     */
+    @Query(
+        "UPDATE session_table SET person_id = :personId, transcript = :transcript, timestamp = :timestamp " +
+            "WHERE session_id = :sessionId",
+    )
+    suspend fun extend(sessionId: Long, personId: Long?, transcript: String?, timestamp: Long)
 
     @Query("SELECT COUNT(*) FROM session_table")
     suspend fun count(): Long

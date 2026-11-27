@@ -25,7 +25,7 @@ class MemoryRepository(
                 updatedAt = rec.timestamp,
             ),
         )
-        sessionDao.insert(rec.toSession(personId))
+        insertOrMerge(rec.toSession(personId))
         return personId
     }
 
@@ -34,16 +34,27 @@ class MemoryRepository(
     }
 
     /**
-     * One diary entry per conversation, not one per 5 s tick: if the newest session is about the same
-     * subject (same person, or both no-person) and was last updated within [MERGE_WINDOW_MS], append
-     * this tick's transcript to it and bump its time; otherwise insert a new session. Keeps the
-     * timeline readable and gives the LLM whole conversations to answer from.
+     * One diary entry per **conversation**, not one per 5 s tick. A conversation is a continuous stretch
+     * of ticks with gaps ≤ [MERGE_WINDOW_MS]; once a person is identified in it, it belongs to them —
+     * because in real use the camera drifts off the face for a few seconds while people keep talking:
+     * - same subject as the newest session → extend it (append transcript, bump time);
+     * - newest session has no person, now a person is centered → claim it for that person
+     *   (speech heard just before the face came into view belongs to them);
+     * - newest session has a person, now nobody is centered → extend it, keeping the person;
+     * - a *different* person → start a new session.
      */
     private suspend fun insertOrMerge(session: MemorySessionEntity) {
         val last = sessionDao.findRecent(1).firstOrNull()
-        val gap = session.timestamp - (last?.timestamp ?: Long.MIN_VALUE / 2)
-        if (last != null && last.personId == session.personId && gap in 0..MERGE_WINDOW_MS) {
-            sessionDao.extend(last.sessionId, joinTranscripts(last.transcript, session.transcript), session.timestamp)
+        val sameConversation = last != null &&
+            (session.timestamp - last.timestamp) in 0..MERGE_WINDOW_MS &&
+            (last.personId == session.personId || last.personId == null || session.personId == null)
+        if (last != null && sameConversation) {
+            sessionDao.extend(
+                sessionId = last.sessionId,
+                personId = last.personId ?: session.personId, // whoever was identified owns it
+                transcript = joinTranscripts(last.transcript, session.transcript),
+                timestamp = session.timestamp,
+            )
         } else {
             sessionDao.insert(session)
         }

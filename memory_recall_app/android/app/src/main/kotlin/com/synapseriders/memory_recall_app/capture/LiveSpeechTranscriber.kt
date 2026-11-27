@@ -29,6 +29,7 @@ class LiveSpeechTranscriber(context: Context) {
     private val appContext = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val pending = StringBuilder()
+    private var lastPhrase: String? = null // main thread only
 
     private var recognizer: SpeechRecognizer? = null
     private var useOnDevice = true
@@ -115,11 +116,16 @@ class LiveSpeechTranscriber(context: Context) {
         override fun onResults(results: Bundle?) {
             val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
             if (!text.isNullOrBlank()) {
-                synchronized(pending) {
-                    if (pending.isNotEmpty()) pending.append(". ")
-                    pending.append(text.trim())
+                // The recognizer sometimes repeats the previous phrase; keep only the new words.
+                val novel = TranscriptMerge.novelTail(lastPhrase, text)
+                lastPhrase = text
+                if (novel.isNotBlank()) {
+                    synchronized(pending) {
+                        if (pending.isNotEmpty()) pending.append(". ")
+                        pending.append(novel)
+                    }
                 }
-                Log.d(TAG, "heard: $text")
+                Log.d(TAG, "heard: $text → kept: $novel")
             }
             restart(RESTART_DELAY_MS)
         }
