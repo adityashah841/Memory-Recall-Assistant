@@ -13,25 +13,24 @@
 
 ---
 
-## 0. Current status & incremental path
+## 0. Current status
 
-This project is **already underway**. Three checkpoints are complete, but the data layer was migrated
-to the **v2 landmark-geometry** schema (`landmark_vector`, `float32[936]`). v4.0 **reverts identity to
-learned face embeddings** — **CavaFace** ArcFace `float32[512]` — and adds **center-crop targeting**.
-So the immediate next task is a **second data-layer migration** (Checkpoint 2.6) that swaps
-`landmark_vector` → `face_embedding`, **before** any new feature work.
+> **v4.2 (post-hackathon):** a second, swappable AI backend (Google on-device: ML Kit + FaceNet/LiteRT +
+> Android SpeechRecognizer + Gemini Nano) makes the full pipeline run live on non-Qualcomm phones
+> (verified on a Pixel 10). The Qualcomm stack below remains the primary design and is selected
+> automatically when its native bridge + models are present. Details: §24.8.
 
 | Checkpoint | State | Notes |
 | --- | --- | --- |
-| **CP1 — Skeleton & Pigeon bridge** | ✅ Done | Flutter shell (4 screens), Pigeon API, `MemoryBackendChannel` (canned data), `MainActivity` host. Unchanged in v4. |
-| **CP2 — Data layer** | ✅ Done | Room DB + entities + DAOs + `MemoryRepository` + `DemoSeeder` + `DtoMappers`. |
-| **CP2.5 — v1→v2 migration (landmark)** | ✅ Done | Schema moved to `landmark_vector float32[936]`; `EmbeddingCodec`→`LandmarkCodec`. **Now superseded by v4.** |
-| **CP2.6 — v2→v4 migration (CavaFace embedding)** | ⛔ **NEXT** | `landmark_vector (float32[936])` → `face_embedding (float32[512])`; `LandmarkCodec`→`EmbeddingCodec`; `DemoSeeder` seeds 512-d. See §21. |
-| **CP3 → CP9** | ⛔ Not started | Proceed in order per §22 once CP2.6 is green. |
-
-**Do CP2.6 first.** Everything downstream (identity, capture, recall) assumes the v4 `face_embedding`
-schema and CavaFace. Note: no identity engine has been built yet (no `identity/` folder), so there is
-no `LandmarkIdentityEngine` to delete — v4 introduces `FaceEmbeddingEngine` fresh in CP4.
+| **CP1 — Skeleton & Pigeon bridge** | ✅ Done | |
+| **CP2 / 2.5 / 2.6 — Data layer + migrations** | ✅ Done | v4 `face_embedding float32[512]` schema. |
+| **CP3 — Model runners** | 🟡 Qualcomm native pending · ✅ Google backend | QNN/Genie graph I/O is a skeleton; ExecuTorch inference gated (§24.7). |
+| **CP4 — FaceEmbeddingEngine + center crop** | ✅ Done | Live on Pixel 10 (§24.8). |
+| **CP5 — ASR** | 🟡 Whisper native pending · ✅ live on-device SpeechRecognizer | |
+| **CP6 — Capture loop** | ✅ Done | Conversation-level session merging (§24.8). |
+| **CP7 — LLM + recall pipeline** | ✅ Done (Gemini Nano) | Genie path pending native bridge. |
+| **CP8 — Enrollment** | ✅ Done | |
+| **CP9 — Demo polish** | 🟡 | Spoken cues/answers, live preview + reticle done; latency dashboard not built. |
 
 ---
 
@@ -44,6 +43,7 @@ no `LandmarkIdentityEngine` to delete — v4 introduces `FaceEmbeddingEngine` fr
 | v3 | CavaFace w8a16 ExecuTorch — reverted after accuracy concern + consent UX added |
 | v4 | CavaFace w8a16 — consent complexity removed, **center-crop targeting** added |
 | v4.1 | **Model formats corrected to as-delivered:** CavaFace + Whisper are **QNN context binaries** (`.bin`), the LLM is a **QNN Genie** bundle (not `.pte`); only detection + landmark are ExecuTorch. Weights **pushed to device**, not bundled. |
+| v4.2 | **Second backend:** Google on-device stack (ML Kit · FaceNet/LiteRT · SpeechRecognizer · Gemini Nano) behind the same `OnDeviceModelRunner`; runs on any recent Android phone. Recall cues/answers spoken via TTS; live camera preview. |
 
 v4 is the clean, buildable version. **No** consent screen, **no** `ConsentManager`, **no**
 `LandmarkIdentityEngine`. Just: detect faces → find center face → align → embed → match.
@@ -714,7 +714,7 @@ On device → /sdcard/Android/data/com.synapseriders.memory_recall_app/files/mod
 
 In repo (committed):
 android/app/libs/                          ← optional manual ExecuTorch AAR override (ExecuTorch is
-                                             pulled from Maven: org.pytorch:executorch-android:1.3.1)
+                                             pulled from Maven: org.pytorch:executorch-android:1.5.1)
 android/app/src/main/jniLibs/arm64-v8a/   ← QAIRT 2.45 .so libs (NOT committed; per-dev local)
 scripts/push_models.sh                     ← adb push helper (laptop → device)
 ```
@@ -1150,6 +1150,44 @@ so it killed the process → the foreground service restarted (START_STICKY) →
 (graceful) work. **To re-enable:** confirm the real input shape/dtype/normalization + output decode for
 the delivered MediaPipe exports (from the model authors or by introspecting the `.pte`), set the decode
 constants, then flip the flag. Identity (Case A/B) remains additionally gated on the QAIRT/CavaFace libs.
+
+### 24.8 v4.2 — Google on-device backend + demo polish (post-hackathon)
+Without access to the S25 / QAIRT artifacts, the pipeline was made to run live on a **Pixel 10**
+(Tensor G5) by adding a second backend behind the unchanged `OnDeviceModelRunner` contract.
+Deviations / additions:
+1. **Backend selection** (`ai/ModelRuntime`): `CompositeModelRunner` (Qualcomm) only if
+   `NativeInference.loaded` **and** `cavaface.bin` is present; otherwise `GoogleModelRunner`.
+2. **`GoogleModelRunner`:** ML Kit face detection (bundled; returns the 5 alignment points on each
+   `FaceBox`, so no separate landmark call) · **FaceNet-512** (`assets/litert/facenet_512.tflite`,
+   160×160 per-image-standardized, bbox crop without eye warp) on LiteRT · Gemini Nano via the ML Kit
+   GenAI Prompt API · speech from Android's live on-device `SpeechRecognizer`
+   (`capture/LiveSpeechTranscriber`, since `SpeechRecognizer` owns the mic and never exposes PCM).
+3. **Contract additions** on `OnDeviceModelRunner` (all with defaults, so the Qualcomm path is
+   unchanged): `faceAlignment` (ArcFace-112 eye template vs FaceNet-160 plain crop), `matchThreshold`
+   (`TAU_KNOWN` 0.60 for CavaFace; **0.40** for FaceNet ≈ L2 1.1), `generateChat(system, user)` (default
+   wraps the §7 Llama 3 template), `transcribesAudio`, `backendName`.
+4. **Geometry in fractions:** `MAX_CENTER_OFFSET_FRAC = 0.25`, `MIN_FACE_SIZE_FRAC = 0.12` of the frame's
+   short side (identical to the old 120 px at 640×480) because frames are now ~720p and **rotated
+   upright** (the S25-era code used sensor-orientation frames, §24.5.6).
+5. **Sessions = conversations** (`MemoryRepository.insertOrMerge`): ticks ≤ 60 s apart extend one
+   session; a no-person session is claimed by the person identified next, and speech while the face is
+   briefly out of frame stays with them. Fixes speech landing in a "no person" row when it preceded the
+   face by tens of seconds (observed on-device).
+6. **Speaker-neutral prompts:** transcripts aren't diarized (§19), so cue/answer prompts forbid
+   attributing statements to either person ("you talked about…"); topic suggestion is "What did {name}
+   and I talk about regarding {topic}?". Recognizer re-emissions of the previous phrase are stripped
+   (`capture/TranscriptMerge`, unit-tested).
+7. **Recall cue (§7.1) implemented** and added to `RecallContextDto.recallCue`; cues and answers are
+   spoken with Android `TextToSpeech` (`recall/RecallSpeaker`).
+8. **Async recall bridge:** `captureRecallContext/getSuggestions/answerQuestion` are now `@async`
+   (resolves §24.4.2 — no `runBlocking` on the platform thread now that a real LLM runs).
+9. **Live preview** (`getLivePreview` → `LivePreviewDto`): the latest frame as JPEG + centered-face box,
+   known/unknown, name, similarity; the Recall screen draws the real targeting circle (§14). Camera runs
+   ~12 fps while the preview polls, 4 fps otherwise.
+10. Service running state now comes from `MemoryForegroundService.running` (was a stale channel flag).
+
+**Verified on-device (Pixel 10, Flutter 3.50.1):** enrollment, Cases A/B/C, edge-face rejection,
+live transcripts, merged conversation entries, Gemini Nano cue + answers, TTS, live preview.
 
 ---
 
