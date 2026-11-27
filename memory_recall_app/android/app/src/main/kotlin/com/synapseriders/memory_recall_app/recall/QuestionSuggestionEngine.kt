@@ -25,7 +25,8 @@ class QuestionSuggestionEngine {
             val topic = extractTopic(rows)
             if (topic != null) {
                 val where = if (place != null) " at $place" else ""
-                out += SuggestionDto("q_topic", "What did $personName say about $topic$where?")
+                // Transcripts aren't split by speaker, so ask about the shared conversation.
+                out += SuggestionDto("q_topic", "What did $personName and I talk about regarding $topic$where?")
             }
             out += SuggestionDto("q_last_seen", "When did I last see $personName?")
         }
