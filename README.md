@@ -82,7 +82,7 @@ IMPLEMENTATION_PLAN.md     The build contract (v4.1)
 
 ## Build & run (Samsung S25 Ultra)
 
-**Prerequisites:** Flutter 3.44+, Android SDK (API 35) + JDK 17, a Snapdragon 8 Elite device with USB
+**Prerequisites:** Flutter 3.50+, Android SDK (API 35) + JDK 17, a Snapdragon 8 Elite device with USB
 debugging.
 
 ```bash

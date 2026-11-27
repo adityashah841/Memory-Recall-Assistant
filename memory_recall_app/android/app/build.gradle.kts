@@ -87,26 +87,26 @@ flutter {
 }
 
 dependencies {
-    val roomVersion = "2.8.4"
+    val roomVersion = "2.8.5"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
     // CP3 (§2, §16): ExecuTorch runtime for the face detection/landmark .pte models, from Maven
     // Central (org.pytorch:executorch-android). Loaded reflectively (ai/ExecuTorchBackend.kt), so the
     // app still compiles/runs (with fallback) if this is ever absent or version-mismatched.
-    implementation("org.pytorch:executorch-android:1.3.1")
+    implementation("org.pytorch:executorch-android:1.5.1")
     // Optional override: drop a specific executorch AAR into app/libs/ to pin a matching runtime.
     implementation(fileTree("libs") { include("*.aar") })
 
     // CP6 (§9, §20.3): CameraX capture, fused location, lifecycle-aware foreground service.
-    val cameraxVersion = "1.4.2"
+    val cameraxVersion = "1.7.0"
     implementation("androidx.camera:camera-core:$cameraxVersion")
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
-    implementation("com.google.android.gms:play-services-location:21.3.0")
-    implementation("androidx.lifecycle:lifecycle-service:2.8.7")
+    implementation("com.google.android.gms:play-services-location:21.4.0")
+    implementation("androidx.lifecycle:lifecycle-service:2.11.1")
 
     // CP4: JVM unit tests for the identity geometry/matching logic (src/test).
     testImplementation("junit:junit:4.13.2")
