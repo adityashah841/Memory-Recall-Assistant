@@ -45,6 +45,11 @@ android {
         }
     }
 
+    // LiteRT memory-maps the .tflite model straight out of the APK, so it must not be compressed.
+    androidResources {
+        noCompress += "tflite"
+    }
+
     // The QAIRT .so runtime libs in jniLibs must ship uncompressed so the native loader can mmap them.
     packaging {
         jniLibs {
@@ -107,6 +112,11 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("com.google.android.gms:play-services-location:21.4.0")
     implementation("androidx.lifecycle:lifecycle-service:2.11.1")
+
+    // Pixel / non-Qualcomm backend (ai/GoogleModelRunner.kt), fully on-device:
+    // ML Kit face detection (bundled model, no Play Services download) + LiteRT for FaceNet-512.
+    implementation("com.google.mlkit:face-detection:16.1.7")
+    implementation("com.google.ai.edge.litert:litert:2.3.0")
 
     // CP4: JVM unit tests for the identity geometry/matching logic (src/test).
     testImplementation("junit:junit:4.13.2")

@@ -35,7 +35,7 @@ class FaceEmbeddingEngineTest {
 
     @Test
     fun ignoresFacesBelowMinSize() {
-        // Centered but smaller than MIN_FACE_SIZE_PX (80) → not a valid target.
+        // Centered but smaller than MIN_FACE_SIZE_FRAC (0.12 × 480 ≈ 58 px) → not a valid target.
         val tiny = FaceBox(left = 310f, top = 230f, width = 20f, height = 20f, confidence = 0.99f)
         assertNull(engine.selectCenterFace(listOf(tiny), frameW, frameH))
     }

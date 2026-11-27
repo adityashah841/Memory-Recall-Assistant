@@ -16,6 +16,8 @@ import android.util.Log
  */
 class CompositeModelRunner(context: Context) : OnDeviceModelRunner {
 
+    override val backendName: String = "Qualcomm QAIRT (ExecuTorch + QNN + Genie)"
+
     private val assets = ModelAssets(context.applicationContext)
     private val executorch = ExecuTorchModelRunner(assets)
     private val qnn = QnnModelRunner(context.applicationContext, assets)

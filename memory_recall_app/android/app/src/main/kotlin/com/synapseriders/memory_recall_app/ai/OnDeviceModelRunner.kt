@@ -1,6 +1,7 @@
 package com.synapseriders.memory_recall_app.ai
 
 import android.graphics.Bitmap
+import com.synapseriders.memory_recall_app.identity.IdentityConfig
 
 /**
  * On-device inference contract (IMPLEMENTATION_PLAN.md §8.3).
@@ -33,6 +34,30 @@ interface OnDeviceModelRunner {
 
     /** Preload/compile every available model off the UI thread. Idempotent; never throws. */
     fun warmUp()
+
+    /** How `FaceEmbeddingEngine` should crop/align a face before [embedFace] for this backend. */
+    val faceAlignment: FaceAlignment get() = FaceAlignment.ARCFACE_112
+
+    /** Cosine-similarity threshold for a "known" match with this backend's embedder. */
+    val matchThreshold: Float get() = IdentityConfig.TAU_KNOWN
+
+    /** Short human-readable backend name for logs and the debug screen. */
+    val backendName: String get() = javaClass.simpleName
+}
+
+/**
+ * Face crop/alignment spec for an embedder. [eyeTemplate] = target (x,y) of the image-left and
+ * image-right eye in the [size]×[size] output; null means a plain bbox crop resized to [size]
+ * (what FaceNet was trained on).
+ */
+data class FaceAlignment(val size: Int, val eyeTemplate: FloatArray?) {
+    companion object {
+        /** ArcFace / CavaFace canonical 112×112 eye positions (§3.7). */
+        val ARCFACE_112 = FaceAlignment(112, floatArrayOf(38.2946f, 51.6963f, 73.5318f, 51.5014f))
+
+        /** FaceNet: bbox crop resized to 160×160, no eye warp. */
+        val FACENET_160 = FaceAlignment(160, null)
+    }
 }
 
 /**
@@ -46,6 +71,12 @@ data class FaceBox(
     val width: Float,
     val height: Float,
     val confidence: Float,
+    /**
+     * Optional 5 key points in **frame** pixels `[x0,y0,…,x4,y4]` (image-left eye, image-right eye,
+     * nose, image-left mouth, image-right mouth) when the detector provides them (e.g. ML Kit), so
+     * no separate landmark model call is needed.
+     */
+    val landmarks: FloatArray? = null,
 ) {
     val centerX get() = left + width / 2f
     val centerY get() = top + height / 2f

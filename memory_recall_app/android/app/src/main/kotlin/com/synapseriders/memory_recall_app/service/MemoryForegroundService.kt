@@ -13,7 +13,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
-import com.synapseriders.memory_recall_app.ai.CompositeModelRunner
+import com.synapseriders.memory_recall_app.ai.OnDeviceModelRunner
 import com.synapseriders.memory_recall_app.ai.ModelRuntime
 import com.synapseriders.memory_recall_app.capture.AudioCaptureProvider
 import com.synapseriders.memory_recall_app.capture.CameraFrameProvider
@@ -47,7 +47,7 @@ class MemoryForegroundService : LifecycleService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val sceneDetector = SceneChangeDetector()
-    private lateinit var runner: CompositeModelRunner
+    private lateinit var runner: OnDeviceModelRunner
     private lateinit var captureLoop: CaptureLoop<Bitmap>
     private lateinit var transcriptBuffer: TranscriptBuffer
 

@@ -4,8 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.util.Log
 import com.synapseriders.memory_recall_app.ai.FaceBox
-import com.synapseriders.memory_recall_app.ai.ImagePreprocess
 import com.synapseriders.memory_recall_app.ai.OnDeviceModelRunner
 import com.synapseriders.memory_recall_app.ai.StageLatency
 import com.synapseriders.memory_recall_app.data.EmbeddingCodec
@@ -31,18 +31,22 @@ class FaceEmbeddingEngine(private val runner: OnDeviceModelRunner) {
 
     /**
      * Full pipeline for one frame. Returns a [MatchResult] for the center face (known or unknown), or
-     * null if no face is within [IdentityConfig.MAX_CENTER_OFFSET_PX] of the frame center (Case C).
+     * null if no face is near the frame center (Case C; see [IdentityConfig.MAX_CENTER_OFFSET_FRAC]).
      */
     fun identify(frame: Bitmap, profiles: List<PersonProfileEntity>): MatchResult? {
         val faces = runner.detectFaces(frame)
         val target = selectCenterFace(faces, frame.width, frame.height) ?: return null
 
         val crop = cropFace(frame, target) ?: return null
-        val landmarks = runner.extractLandmarks(crop)
-        val aligned = alignFace(crop, landmarks)
+        // Prefer key points the detector already produced (in frame coords → shift into the crop);
+        // otherwise run the separate landmark model.
+        val landmarks = target.landmarks?.let { lm ->
+            FloatArray(lm.size) { i -> if (i % 2 == 0) lm[i] - crop.originX else lm[i] - crop.originY }
+        } ?: runner.extractLandmarks(crop.bitmap)
+        val aligned = alignFace(crop.bitmap, landmarks)
         val query = runner.embedFace(aligned)
-        if (aligned !== crop) aligned.recycle()
-        if (crop !== frame) crop.recycle()
+        if (aligned !== crop.bitmap) aligned.recycle()
+        if (crop.bitmap !== frame) crop.bitmap.recycle()
         if (query.isEmpty()) return null
 
         return StageLatency.measure(StageLatency.IDENTITY_MATCH) {
@@ -57,7 +61,9 @@ class FaceEmbeddingEngine(private val runner: OnDeviceModelRunner) {
                     best = profile
                 }
             }
-            val known = best != null && bestScore >= IdentityConfig.TAU_KNOWN
+            val known = best != null && bestScore >= runner.matchThreshold
+            Log.d(TAG, "center face: best=${best?.name ?: best?.personId} score=${"%.3f".format(bestScore)} " +
+                "threshold=${runner.matchThreshold} known=$known (${runner.backendName})")
             MatchResult(
                 personId = if (known) best!!.personId.toInt() else UNKNOWN_PERSON_ID,
                 name = if (known) best!!.name else null,
@@ -71,38 +77,44 @@ class FaceEmbeddingEngine(private val runner: OnDeviceModelRunner) {
 
     /**
      * Face whose bbox center is closest to the frame center (§3.2). Faces smaller than
-     * [IdentityConfig.MIN_FACE_SIZE_PX] are ignored; null if the nearest qualifying face is beyond
-     * [IdentityConfig.MAX_CENTER_OFFSET_PX] (no intentional target).
+     * [IdentityConfig.MIN_FACE_SIZE_FRAC] of the frame's shorter side are ignored; null if the nearest
+     * qualifying face is beyond [IdentityConfig.MAX_CENTER_OFFSET_FRAC] of it (no intentional target).
      */
     internal fun selectCenterFace(faces: List<FaceBox>, frameWidth: Int, frameHeight: Int): FaceBox? {
+        val shortSide = min(frameWidth, frameHeight).toFloat()
+        val minFace = IdentityConfig.MIN_FACE_SIZE_FRAC * shortSide
+        val maxOffset = IdentityConfig.MAX_CENTER_OFFSET_FRAC * shortSide
         var bestBox: FaceBox? = null
         var bestDist = Float.MAX_VALUE
         for (face in faces) {
-            if (min(face.width, face.height) < IdentityConfig.MIN_FACE_SIZE_PX) continue
+            if (min(face.width, face.height) < minFace) continue
             val dist = distanceToCenter(face, frameWidth, frameHeight)
             if (dist < bestDist) {
                 bestDist = dist
                 bestBox = face
             }
         }
-        return if (bestBox != null && bestDist <= IdentityConfig.MAX_CENTER_OFFSET_PX) bestBox else null
+        return if (bestBox != null && bestDist <= maxOffset) bestBox else null
     }
 
     internal fun distanceToCenter(box: FaceBox, frameWidth: Int, frameHeight: Int): Float =
         hypot(box.centerX - frameWidth / 2f, box.centerY - frameHeight / 2f)
 
     /**
-     * Align [crop] to a 112×112 face using the 5 landmarks (§3.7): a 2-point similarity transform that
-     * maps the eye centers onto the canonical ArcFace template, standardizing roll + inter-ocular
-     * distance. Falls back to a plain resize when landmarks are unavailable.
+     * Align [crop] for the backend's embedder ([OnDeviceModelRunner.faceAlignment], §3.7). With an eye
+     * template (ArcFace/CavaFace): a 2-point similarity transform mapping the eye centers onto the
+     * template, standardizing roll + inter-ocular distance. Without one (FaceNet), or when landmarks
+     * are unavailable: a plain resize of the bbox crop.
      */
     fun alignFace(crop: Bitmap, landmarks: FloatArray): Bitmap {
-        val size = ImagePreprocess.CAVAFACE_SIZE
-        if (landmarks.size < 4) {
+        val spec = runner.faceAlignment
+        val size = spec.size
+        val template = spec.eyeTemplate
+        if (template == null || landmarks.size < 4) {
             return Bitmap.createScaledBitmap(crop, size, size, true)
         }
         val srcEyes = floatArrayOf(landmarks[0], landmarks[1], landmarks[2], landmarks[3])
-        val matrix = Matrix().apply { setPolyToPoly(srcEyes, 0, DST_EYES, 0, 2) }
+        val matrix = Matrix().apply { setPolyToPoly(srcEyes, 0, template, 0, 2) }
         val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         Canvas(out).drawBitmap(crop, matrix, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
         return out
@@ -131,22 +143,24 @@ class FaceEmbeddingEngine(private val runner: OnDeviceModelRunner) {
 
     internal fun l2Normalize(v: FloatArray): FloatArray = EmbeddingCodec.l2Normalize(v)
 
-    private fun cropFace(frame: Bitmap, box: FaceBox): Bitmap? {
+    /** A face crop plus where it sits in the frame (to shift frame-space landmarks into it). */
+    private class Crop(val bitmap: Bitmap, val originX: Int, val originY: Int)
+
+    private fun cropFace(frame: Bitmap, box: FaceBox): Crop? {
         val x = box.left.toInt().coerceIn(0, frame.width - 1)
         val y = box.top.toInt().coerceIn(0, frame.height - 1)
         val w = box.width.toInt().coerceAtLeast(1).coerceAtMost(frame.width - x)
         val h = box.height.toInt().coerceAtLeast(1).coerceAtMost(frame.height - y)
         return try {
-            Bitmap.createBitmap(frame, x, y, w, h)
+            Crop(Bitmap.createBitmap(frame, x, y, w, h), x, y)
         } catch (e: IllegalArgumentException) {
             null
         }
     }
 
     private companion object {
+        const val TAG = "FaceEmbeddingEngine"
         const val UNKNOWN_PERSON_ID = -1
-        /** Canonical ArcFace 112×112 eye positions: left eye, right eye. */
-        val DST_EYES = floatArrayOf(38.2946f, 51.6963f, 73.5318f, 51.5014f)
     }
 }
 
